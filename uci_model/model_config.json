@@ -1,0 +1,10 @@
+{
+    "rf_weight": 0.5,
+    "gb_weight": 0.5,
+    "positive_class": 1,
+    "positive_label": "Parkinson's",
+    "negative_class": 0,
+    "negative_label": "Healthy",
+    "feature_count": 22,
+    "dataset": "UCI Parkinson's Disease Classification"
+}

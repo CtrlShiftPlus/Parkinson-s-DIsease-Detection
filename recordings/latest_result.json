@@ -1,0 +1,8 @@
+{
+  "random_forest_score": 0.6862256497266618,
+  "gradient_boosting_score": 0.5607931535547308,
+  "combined_score": 0.6235094016406963,
+  "predicted_class": 0,
+  "predicted_label": "Healthy-control dataset class",
+  "recording": "D:\\College\\Project\\Major Project - 7th Sem\\Parkinsons2\\The_Project\\recordings\\my_voice.wav"
+}
