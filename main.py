@@ -36,10 +36,25 @@ VOICE_MODEL_DIR = BASE_DIR / "audio_model"
 VOICE_MODEL_PATH = VOICE_MODEL_DIR / "parkinsons_audio_ensemble2.pkl"
 VOICE_CONFIG_PATH = VOICE_MODEL_DIR / "audio_model_config2.json"
 
-# Alcohol-Effect Model Paths (Located on D: drive)
-ALCOHOL_MODEL_DIR = Path(r"D:\Major project Datasets")
-ALCOHOL_MODEL_PATH = ALCOHOL_MODEL_DIR / "model.pkl"
-ALCOHOL_SCALER_PATH = ALCOHOL_MODEL_DIR / "scaler.pkl"
+# Alcohol-Effect Model Paths (searches local alcohol_model/ first, then D: drive fallback)
+LOCAL_ALCOHOL_DIR = BASE_DIR / "alcohol_model"
+FALLBACK_ALCOHOL_DIR = Path(r"D:\Major project Datasets")
+
+def find_alcohol_artifacts():
+    candidates = [
+        LOCAL_ALCOHOL_DIR,
+        FALLBACK_ALCOHOL_DIR,
+        FALLBACK_ALCOHOL_DIR / "Parkinsons_Dataset_Analysis",
+        BASE_DIR
+    ]
+    for d in candidates:
+        m = d / "model.pkl"
+        s = d / "scaler.pkl"
+        if m.exists() and s.exists():
+            return m, s
+    return LOCAL_ALCOHOL_DIR / "model.pkl", LOCAL_ALCOHOL_DIR / "scaler.pkl"
+
+ALCOHOL_MODEL_PATH, ALCOHOL_SCALER_PATH = find_alcohol_artifacts()
 
 DEFAULT_SAMPLE_WAV = BASE_DIR / "recordings" / "my_voice.wav"
 
