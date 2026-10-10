@@ -268,7 +268,7 @@ def predict_voice(file_path, bundle):
     features = extract_audio_features(file_path)
 
     expected_columns = bundle["feature_columns"]
-    threshold = 0.65
+    threshold = 0.85
 
     missing = [
         column for column in expected_columns
@@ -376,7 +376,7 @@ def main():
 
     bundle, config = load_models()
 
-    bundle["threshold"] = 0.70
+    bundle["threshold"] = 0.85
 
     global SAMPLE_RATE,N_MFCC
 

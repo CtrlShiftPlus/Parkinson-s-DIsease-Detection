@@ -1,8 +1,8 @@
 {
-  "random_forest_score": 0.6862256497266618,
-  "gradient_boosting_score": 0.5607931535547308,
-  "combined_score": 0.6235094016406963,
+  "random_forest_score": 0.4908626675531924,
+  "gradient_boosting_score": 0.46933279840795755,
+  "combined_score": 0.480097732980575,
   "predicted_class": 0,
   "predicted_label": "Healthy-control dataset class",
-  "recording": "D:\\College\\Project\\Major Project - 7th Sem\\Parkinsons2\\The_Project\\recordings\\my_voice.wav"
+  "recording": "/Users/mrudhulas/Parkinson_detection/Parkinson-s-DIsease-Detection/recordings/my_voice.wav"
 }

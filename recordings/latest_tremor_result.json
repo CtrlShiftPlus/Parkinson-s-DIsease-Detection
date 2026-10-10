@@ -1,0 +1,14 @@
+{
+  "dataset_number": 1,
+  "rows": "1-250",
+  "windows_analysed": 9,
+  "extra_trees_score": 0.8894805789970965,
+  "random_forest_score": 0.9103309185406749,
+  "gradient_boosting_score": 0.9966304920930177,
+  "combined_score": 0.9321473298769297,
+  "predicted_class": 1,
+  "predicted_label": "Parkinson's tremor class",
+  "dataset_true_label": "Parkinson's tremor class",
+  "dataset_label_purity": 0.964,
+  "match": true
+}
