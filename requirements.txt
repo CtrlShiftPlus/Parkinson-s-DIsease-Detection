@@ -1,4 +1,3 @@
-
 numpy
 pandas
 librosa
@@ -6,3 +5,13 @@ soundfile
 sounddevice
 scikit-learn
 joblib
+pydub
+
+# Backend API Dependencies
+fastapi
+uvicorn[standard]
+sqlalchemy
+bcrypt
+python-jose[cryptography]
+python-multipart
+pydantic[email]

@@ -1,12 +1,15 @@
 """
 ===============================================================================
-Parkinson's Disease ML Multi-Modal Pipeline Integration
+Parkinson's Disease ML Tri-Modal Pipeline Integration
 ===============================================================================
-Integrates two independently trained Parkinson's Machine Learning models:
+Integrates three independently trained Parkinson's Machine Learning models:
 1. Voice Model: Predicts Parkinson's risk from audio speech feature extraction
    (Librosa acoustic summary stats -> Random Forest + Gradient Boosting ensemble).
 2. Alcohol-Effect Model: Evaluates Parkinson's association based on Age &
    Alcohol Consumption (NIH PDBP Study -> StandardScaler + Logistic Regression).
+3. Kinematic Tremor Model: Predicts Parkinson's motor tremor from tri-axial
+   accelerometer & gyroscope motion sensors (Time-blocked Extra Trees + Random
+   Forest + HistGradientBoosting ensemble).
 ===============================================================================
 """
 
@@ -16,6 +19,51 @@ import argparse
 import json
 import warnings
 from pathlib import Path
+
+# =============================================================================
+# SCIKIT-LEARN COMPATIBILITY SHIM FOR _loss MODULE (MUST BE FIRST)
+# =============================================================================
+# scikit-learn 1.6+ moved _loss from top-level to sklearn._loss
+# and renamed Cython classes (e.g., CyHalfBinomialLoss -> HalfBinomialLoss)
+# This shim allows older model pickles to load successfully
+# Must be done before any sklearn imports
+import sklearn
+try:
+    from sklearn import _loss as sklearn_loss
+    sys.modules['_loss'] = sklearn_loss
+except (ImportError, AttributeError):
+    # Create a minimal shim module for _loss at the top level
+    sys.modules['_loss'] = type(sys)('_loss')
+    sys.modules['_loss'].__dict__.update({
+        '__name__': '_loss',
+        '__package__': '',
+        '__loader__': None,
+        '__spec__': None,
+    })
+    # Try to populate it with sklearn._loss contents if available
+    try:
+        import sklearn._loss
+        for attr in dir(sklearn._loss):
+            if not attr.startswith('_'):
+                sys.modules['_loss'].__dict__[attr] = getattr(sklearn._loss, attr)
+                # Add Cy-prefixed aliases for renamed Cython classes
+                # In scikit-learn 1.6+, CyHalfBinomialLoss -> HalfBinomialLoss, etc.
+                if not attr.startswith('Cy'):
+                    cy_name = 'Cy' + attr
+                    sys.modules['_loss'].__dict__[cy_name] = getattr(sklearn._loss, attr)
+    except:
+        pass
+
+# Also patch sklearn._loss to have the Cy-prefixed aliases for pickle compatibility
+try:
+    import sklearn._loss
+    for attr in dir(sklearn._loss):
+        if not attr.startswith('_') and not attr.startswith('Cy'):
+            cy_name = 'Cy' + attr
+            if not hasattr(sklearn._loss, cy_name):
+                setattr(sklearn._loss, cy_name, getattr(sklearn._loss, attr))
+except:
+    pass
 
 import numpy as np
 import pandas as pd
@@ -55,6 +103,12 @@ def find_alcohol_artifacts():
     return LOCAL_ALCOHOL_DIR / "model.pkl", LOCAL_ALCOHOL_DIR / "scaler.pkl"
 
 ALCOHOL_MODEL_PATH, ALCOHOL_SCALER_PATH = find_alcohol_artifacts()
+
+# Tremor Model Paths
+TREMOR_MODEL_DIR = BASE_DIR / "tremor_model"
+TREMOR_MODEL_PATH = TREMOR_MODEL_DIR / "tremor_ensemble.pkl"
+TREMOR_CONFIG_PATH = TREMOR_MODEL_DIR / "tremor_model_config.json"
+TREMOR_CSV_PATH = BASE_DIR / "tremor_data" / "Dataset.csv"
 
 DEFAULT_SAMPLE_WAV = BASE_DIR / "recordings" / "my_voice.wav"
 
@@ -250,65 +304,99 @@ def validate_audio_file(file_path):
         raise ValueError("File must be a supported audio format (.wav, .mp3, .flac, .ogg, .m4a)")
     return path
 
+from tremor_runner import TremorModelRunner
+
 # =============================================================================
 # 5. CLI & PRESENTATION INTERFACE
 # =============================================================================
 
-def run_pipeline(voice_runner, alcohol_runner, age, alcohol_val, audio_path):
-    print("\n" + "=" * 55)
-    print("      RUNNING INTEGRATED PARKINSON'S PIPELINE")
-    print("=" * 55)
+def run_pipeline(
+    voice_runner,
+    alcohol_runner,
+    tremor_runner,
+    age,
+    alcohol_val,
+    audio_path,
+    tremor_segment=1,
+    tremor_csv=None
+):
+    print("\n" + "=" * 65)
+    print("      RUNNING INTEGRATED TRI-MODAL PARKINSON'S PIPELINE")
+    print("=" * 65)
 
-    print("\n[Step 1/2] Processing Voice Model...")
+    print("\n[Step 1/3] Processing Voice Acoustic Model...")
     voice_res = voice_runner.predict(audio_path)
     print(f" -> Acoustic Features Extracted from: {audio_path.name}")
     print(f" -> Random Forest Score:       {voice_res['rf_score'] * 100:.2f}%")
     print(f" -> Gradient Boosting Score:   {voice_res['gb_score'] * 100:.2f}%")
     print(f" -> Voice Ensemble Prediction: {voice_res['combined_score'] * 100:.2f}% ({voice_res['predicted_label']})")
 
-    print("\n[Step 2/2] Processing Alcohol-Effect Model...")
+    print("\n[Step 2/3] Processing Alcohol Demographic Model...")
     alcohol_res = alcohol_runner.predict(age, alcohol_val)
     print(f" -> Age:                       {alcohol_res['age']} years")
     print(f" -> Avg Drinks per Day:        {alcohol_res['avg_drinks']}")
     print(f" -> Demographic Study Risk:    {alcohol_res['probability_pct']:.2f}% ({alcohol_res['risk_level']} RISK)")
 
-    print("\n" + "=" * 55)
-    print("               FINAL PIPELINE RESULTS")
+    print("\n[Step 3/3] Processing Kinematic Tremor Model...")
+    if tremor_csv:
+        tremor_res = tremor_runner.predict_csv(tremor_csv, source_name=Path(tremor_csv).name)
+        print(f" -> Sensor Source:             {tremor_res['source']}")
+    else:
+        tremor_res = tremor_runner.predict_segment(tremor_segment)
+        print(f" -> Sensor Benchmark Segment:  #{tremor_res['dataset_number']} ({tremor_res['rows']} rows)")
+    print(f" -> Windows Analysed:          {tremor_res['windows_analysed']} overlapping windows")
+    print(f" -> Extra Trees Score:         {tremor_res['extra_trees_score'] * 100:.2f}%")
+    print(f" -> Random Forest Score:       {tremor_res['random_forest_score'] * 100:.2f}%")
+    print(f" -> Hist Gradient Boost Score: {tremor_res['gradient_boosting_score'] * 100:.2f}%")
+    print(f" -> Tremor Ensemble Score:     {tremor_res['combined_score'] * 100:.2f}% ({tremor_res['predicted_label']})")
+
+    print("\n" + "=" * 65)
+    print("               FINAL TRI-MODAL PIPELINE RESULTS")
+    print("=" * 65)
+    print("1. VOICE ACOUSTIC BIOMARKER MODEL:")
+    print(f"   * Prediction:             {voice_res['predicted_label']}")
+    print(f"   * Ensemble Confidence:    {voice_res['combined_score'] * 100:.2f}%")
+    print(f"   * Evaluated Audio:        {voice_res['audio_file']}")
+    print("-" * 65)
+    print("2. ALCOHOL-DEMOGRAPHIC RISK MODEL:")
+    print(f"   * Risk Classification:    {alcohol_res['risk_level']} RISK ({alcohol_res['probability_pct']:.2f}%)")
+    print(f"   * Patient Parameters:     Age: {alcohol_res['age']} yrs | Consumption: {alcohol_res['avg_drinks']} drinks/day")
+    print("-" * 65)
+    print("3. KINEMATIC TREMOR BIOMARKER MODEL:")
+    print(f"   * Prediction:             {tremor_res['predicted_label']}")
+    print(f"   * Ensemble Confidence:    {tremor_res['combined_score'] * 100:.2f}%")
+    print(f"   * Sensor Source:          {tremor_res['source']}")
+    if tremor_res.get('dataset_true_label'):
+        print(f"   * Benchmark True Label:   {tremor_res['dataset_true_label']} (Agreement: {'YES' if tremor_res.get('match') else 'NO'})")
+    print("=" * 65)
+
+    print("\n" + "-" * 65)
+    print("       SCIENTIFIC MULTI-MODAL RELATIONSHIP INTERPRETATION")
+    print("-" * 65)
+    print("1. Acoustic Phonation Biomarkers (Voice Model):")
+    print("   - Measures neuro-motor vocal impairment (dysphonia, pitch stability,")
+    print("     MFCC dynamics) directly reflecting cranial nerve phonation control.")
+    print("2. Epidemiological Profile (Alcohol-Effect Model):")
+    print("   - Measures statistical correlation from longitudinal study data (NIH PDBP)")
+    print("     reflecting non-motor epidemiological factors (age and alcohol habits).")
+    print("3. Inertial Biomechanical Kinematics (Tremor Model):")
+    print("   - Measures resting/postural oscillatory tremor (3-8 Hz) extracted from")
+    print("     accelerometer & gyroscopic sensor dynamics without body orientation bias.")
+    print("4. Multi-Modal Decision-Support Value:")
+    print("   - Providing all three independent modalities side-by-side offers clinicians")
+    print("     a unified multi-dimensional screening dashboard.")
+    print("   - Individual probabilities are preserved without arbitrary numerical")
+    print("     conflation, ensuring rigorous scientific integrity.")
+    print("=" * 65 + "\n")
+
+    return voice_res, alcohol_res, tremor_res
+
+
+def interactive_cli(voice_runner, alcohol_runner, tremor_runner):
     print("=" * 55)
-    print(f"Voice Model Classification:    {voice_res['predicted_label']}")
-    print(f"  * Voice Ensemble Confidence: {voice_res['combined_score'] * 100:.2f}%")
-    print(f"  * Audio File Evaluated:      {voice_res['audio_file']}")
-    print("-" * 55)
-    print(f"Alcohol-Effect Model Risk:     {alcohol_res['risk_level']} RISK ({alcohol_res['probability_pct']:.2f}%)")
-    print(f"  * Age Evaluated:             {alcohol_res['age']} years")
-    print(f"  * Alcohol Daily Consumption: {alcohol_res['avg_drinks']} drinks/day")
-    print("=" * 55)
-
-    print("\n" + "-" * 55)
-    print("       SCIENTIFIC MODEL RELATIONSHIP INTERPRETATION")
-    print("-" * 55)
-    print("1. Voice Model:")
-    print("   - Evaluates vocal acoustic biomarkers (MFCCs, jitter/shimmer proxies,")
-    print("     pitch stability, spectral flatness) from recorded speech.")
-    print("   - Measures active neuro-motor articulation patterns.")
-    print("2. Alcohol-Effect Model:")
-    print("   - Evaluates statistical demographic risk based on participant age and")
-    print("     alcohol consumption metrics from the NIH PDBP study dataset.")
-    print("3. Pipeline Integration Note:")
-    print("   - The outputs are kept distinct because they assess two separate")
-    print("     dimensions: physiological vocal signal vs epidemiological history.")
-    print("   - Combining them into a single merged probability is statistically")
-    print("     unjustified as they were trained on independent dataset populations.")
-    print("=" * 55 + "\n")
-
-    return voice_res, alcohol_res
-
-
-def interactive_cli(voice_runner, alcohol_runner):
-    print("=" * 50)
-    print("        Parkinson's Disease ML Demo")
-    print("========================================")
-    print("\nEnter patient information:")
+    print("    Parkinson's Disease Tri-Modal Screening Demo")
+    print("=======================================================")
+    print("\nEnter patient demographic & behavioral information:")
 
     # Age input
     while True:
@@ -341,21 +429,29 @@ def interactive_cli(voice_runner, alcohol_runner):
         except Exception as e:
             print(f"Invalid input: {e}")
 
-    run_pipeline(voice_runner, alcohol_runner, age, alcohol_val, audio_path)
+    # Tremor input
+    print(f"\nTremor benchmark dataset segments available: 1 to {tremor_runner.n_segments}")
+    raw_seg = input("Choose tremor dataset segment [Press Enter for default: 1]: ").strip()
+    tremor_seg = int(raw_seg) if (raw_seg.isdigit() and 1 <= int(raw_seg) <= tremor_runner.n_segments) else 1
+
+    run_pipeline(voice_runner, alcohol_runner, tremor_runner, age, alcohol_val, audio_path, tremor_segment=tremor_seg)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Parkinson's Disease Multi-Model ML Pipeline")
-    parser.add_argument("--demo", action="store_true", help="Run automated demonstration mode with sample inputs")
+    parser = argparse.ArgumentParser(description="Parkinson's Disease Tri-Modal ML Pipeline")
+    parser.add_argument("--demo", action="store_true", help="Run automated demonstration mode with verified sample inputs")
     parser.add_argument("--age", type=float, help="Patient age in years")
     parser.add_argument("--alcohol", type=float, help="Average alcoholic drinks per day")
     parser.add_argument("--audio", type=str, help="Path to audio file (.wav)")
+    parser.add_argument("--tremor-segment", type=int, default=1, help="Benchmark tremor dataset segment (1-111)")
+    parser.add_argument("--tremor-csv", type=str, help="Path to kinematic sensor CSV file")
     args = parser.parse_args()
 
-    print("Initializing Multi-Modal Pipeline...")
+    print("Initializing Tri-Modal Pipeline...")
     voice_runner = VoiceModelRunner()
     alcohol_runner = AlcoholModelRunner()
-    print("Models & Scalers loaded successfully!\n")
+    tremor_runner = TremorModelRunner()
+    print("All Three ML Models & Weights Loaded Successfully!\n")
 
     if args.demo:
         age = 65.0
@@ -364,16 +460,34 @@ def main():
         if not audio_path.exists():
             print(f"Error: Sample audio file missing at {audio_path}")
             sys.exit(1)
-        print(">>> Running non-interactive demo mode...")
-        print(f"Input Age: {age} | Input Alcohol: {alcohol_val} drinks/day | Audio: {audio_path.name}")
-        run_pipeline(voice_runner, alcohol_runner, age, alcohol_val, audio_path)
+        print(">>> Running non-interactive demo mode on all 3 models...")
+        print(f"Input Age: {age} | Input Alcohol: {alcohol_val} drinks/day | Audio: {audio_path.name} | Tremor: Segment #{args.tremor_segment}")
+        run_pipeline(
+            voice_runner,
+            alcohol_runner,
+            tremor_runner,
+            age,
+            alcohol_val,
+            audio_path,
+            tremor_segment=args.tremor_segment,
+            tremor_csv=args.tremor_csv
+        )
     elif args.age is not None and args.alcohol is not None and args.audio is not None:
         age = parse_age(args.age)
         alcohol_val = parse_alcohol(args.alcohol)
         audio_path = validate_audio_file(args.audio)
-        run_pipeline(voice_runner, alcohol_runner, age, alcohol_val, audio_path)
+        run_pipeline(
+            voice_runner,
+            alcohol_runner,
+            tremor_runner,
+            age,
+            alcohol_val,
+            audio_path,
+            tremor_segment=args.tremor_segment,
+            tremor_csv=args.tremor_csv
+        )
     else:
-        interactive_cli(voice_runner, alcohol_runner)
+        interactive_cli(voice_runner, alcohol_runner, tremor_runner)
 
 
 if __name__ == "__main__":

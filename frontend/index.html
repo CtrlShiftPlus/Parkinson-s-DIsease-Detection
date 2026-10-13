@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parkinson's Disease Multi-Modal ML Screening Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dark-theme">
+
+    <!-- TOP NAVIGATION BAR -->
+    <header class="top-nav">
+        <div class="nav-brand">
+            <div class="brand-logo">🧠</div>
+            <div class="brand-text">
+                <span class="brand-title">NeuroScreen<span class="brand-highlight">ML</span></span>
+                <span class="brand-subtitle">Integrated Parkinson's Clinical Decision-Support Pipeline</span>
+            </div>
+        </div>
+
+        <div class="nav-actions" id="nav-user-controls" style="display: none;">
+            <!-- Doctor Notification Bell -->
+            <div class="nav-notification-wrapper" id="doctor-notif-bell" style="display: none;">
+                <button class="icon-btn" id="notif-btn" title="Doctor Risk Notifications">
+                    🔔
+                    <span class="notif-badge" id="notif-count">0</span>
+                </button>
+            </div>
+
+            <div class="user-profile-badge">
+                <span class="user-avatar" id="user-avatar">👤</span>
+                <div class="user-details">
+                    <span class="user-name" id="user-display-name">Loading...</span>
+                    <span class="user-role-tag" id="user-role-tag">PATIENT</span>
+                </div>
+            </div>
+
+            <button class="btn btn-outline btn-sm" id="logout-btn">Logout</button>
+        </div>
+    </header>
+
+    <!-- AUTHENTICATION SCREEN (LOGIN / REGISTER) -->
+    <div class="auth-container" id="auth-screen">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <div class="auth-icon">🏥</div>
+                <h2>Clinical ML Dashboard</h2>
+                <p>Sign in to access integrated Parkinson's voice & behavioral analysis models</p>
+            </div>
+
+            <div class="auth-tabs">
+                <button class="tab-btn active" id="tab-login-btn">Login</button>
+                <button class="tab-btn" id="tab-register-btn">Register</button>
+            </div>
+
+            <!-- LOGIN FORM -->
+            <form id="login-form" class="auth-form active">
+                <div class="form-group">
+                    <label for="login-email">Email Address</label>
+                    <input type="email" id="login-email" placeholder="e.g. doctor@hospital.org" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="••••••••" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+
+                <div class="quick-demo-box">
+                    <p class="quick-demo-title">⚡ Quick Demo Login:</p>
+                    <div class="quick-demo-btns">
+                        <button type="button" class="btn btn-secondary btn-xs" id="demo-doctor-btn">👤 Login as Doctor</button>
+                        <button type="button" class="btn btn-secondary btn-xs" id="demo-patient-btn">👤 Login as Patient</button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- REGISTER FORM -->
+            <form id="register-form" class="auth-form">
+                <div class="form-group">
+                    <label for="reg-name">Full Name</label>
+                    <input type="text" id="reg-name" placeholder="Dr. Jane Smith or John Doe" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reg-email">Email Address</label>
+                    <input type="email" id="reg-email" placeholder="user@domain.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reg-password">Password</label>
+                    <input type="password" id="reg-password" placeholder="At least 6 characters" required minlength="6">
+                </div>
+
+                <div class="form-group">
+                    <label for="reg-role">Account Role</label>
+                    <select id="reg-role" required>
+                        <option value="patient">Patient / User</option>
+                        <option value="doctor">Doctor / Clinician</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+            </form>
+
+            <div id="auth-error" class="alert alert-error" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT -->
+    <main class="dashboard-layout" id="dashboard-screen" style="display: none;">
+        
+        <!-- RESEARCH & CLINICAL DISCLAIMER BANNER -->
+        <div class="disclaimer-banner">
+            <span class="disclaimer-icon">⚠️</span>
+            <div class="disclaimer-text">
+                <strong>Scientific Research & Decision-Support System</strong>: This ML pipeline integrates trained acoustic & behavioral models. It is designed for clinical screening evaluation and does <strong>NOT</strong> provide a definitive medical diagnosis.
+            </div>
+        </div>
+
+        <!-- DOCTOR ALERT NOTIFICATION CENTER PANEL (VISIBLE TO DOCTOR ROLE) -->
+        <section class="dashboard-section" id="doctor-notifications-section" style="display: none;">
+            <div class="section-header">
+                <h3>🔔 Doctor Risk Alert Center <span class="badge badge-alert" id="unread-count-badge">0 New</span></h3>
+                <button class="btn btn-secondary btn-sm" id="refresh-notifs-btn">Refresh Alerts</button>
+            </div>
+            <div class="notifications-list" id="notifications-container">
+                <div class="empty-state">No clinical risk alerts generated yet.</div>
+            </div>
+        </section>
+
+        <div class="grid-two-columns">
+            
+            <!-- LEFT COLUMN: INPUTS & RECORDING -->
+            <div class="column-left">
+                
+                <!-- PATIENT INFORMATION CARD -->
+                <section class="card glass-card">
+                    <div class="card-header">
+                        <span class="card-icon">📋</span>
+                        <h4>1. Patient Demographics & Behavioral Inputs</h4>
+                    </div>
+
+                    <form id="analysis-form">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="patient-name">Patient Name / ID</label>
+                                <input type="text" id="patient-name" placeholder="e.g. Arthur Pendelton" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="patient-age">Age (Years)</label>
+                                <input type="number" id="patient-age" min="18" max="120" value="65" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="patient-gender">Gender</label>
+                                <select id="patient-gender">
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                    <option value="Unspecified">Unspecified / Other</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="avg-drinks">Avg Alcohol (Drinks/Day)</label>
+                                <input type="number" id="avg-drinks" min="0" max="25" step="0.5" value="2.0" required>
+                                <small class="form-help">NIH PDBP model feature (0 - 10)</small>
+                            </div>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- VOICE RECORDING & AUDIO UPLOAD CARD -->
+                <section class="card glass-card">
+                    <div class="card-header">
+                        <span class="card-icon">🎙️</span>
+                        <h4>2. Patient Voice Screening Analysis</h4>
+                    </div>
+
+                    <div class="audio-input-tabs">
+                        <button class="tab-sub-btn active" id="subtab-record">Record Live Audio</button>
+                        <button class="tab-sub-btn" id="subtab-upload">Upload WAV/MP3 File</button>
+                    </div>
+
+                    <!-- RECORD LIVE AUDIO MODE -->
+                    <div class="audio-mode-panel active" id="mode-record-panel">
+                        <div class="record-instructions">
+                            <p><strong>Instructions:</strong> Press Record, sit in a quiet room, and say <strong>"aaaaah"</strong> steadily for 5-7 seconds.</p>
+                        </div>
+
+                        <div class="recorder-widget">
+                            <div class="visualizer-container" id="visualizer-box">
+                                <div class="wave-bar"></div>
+                                <div class="wave-bar"></div>
+                                <div class="wave-bar"></div>
+                                <div class="wave-bar"></div>
+                                <div class="wave-bar"></div>
+                            </div>
+
+                            <div class="record-timer" id="record-timer">00:00</div>
+
+                            <div class="recorder-controls">
+                                <button class="btn btn-record" id="btn-start-record">
+                                    <span class="record-dot"></span> Start Recording
+                                </button>
+                                <button class="btn btn-danger" id="btn-stop-record" style="display: none;">
+                                    ⏹ Stop Recording
+                                </button>
+                            </div>
+
+                            <div id="audio-preview-box" style="display: none;" class="audio-preview">
+                                <p class="preview-label">Recorded Audio Preview:</p>
+                                <audio id="recorded-audio-element" controls></audio>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- UPLOAD AUDIO FILE MODE -->
+                    <div class="audio-mode-panel" id="mode-upload-panel">
+                        <div class="upload-dropzone" id="dropzone">
+                            <span class="upload-icon">📁</span>
+                            <p>Drag & drop audio file here or <span class="highlight-link">browse</span></p>
+                            <small>Supported formats: .wav, .mp3, .m4a (Max size: 10MB)</small>
+                            <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
+                        </div>
+                        <div id="selected-file-name" class="file-status">No file selected</div>
+                        
+                        <div class="preset-sample-box">
+                            <button type="button" class="btn btn-secondary btn-sm" id="btn-use-sample">
+                                🎵 Use Pre-recorded Sample WAV (my_voice.wav)
+                            </button>
+                        </div>
+                    </div>
+
+                </section>
+
+                <!-- 3. KINEMATIC TREMOR MOTION ANALYSIS CARD -->
+                <section class="card glass-card" id="tremor-input-card">
+                    <div class="card-header">
+                        <span class="card-icon">📉</span>
+                        <h4>3. Kinematic Tremor Motion Analysis</h4>
+                        <span class="badge badge-success">ML Model Active</span>
+                    </div>
+
+                    <div class="audio-input-tabs">
+                        <button type="button" class="tab-sub-btn active" id="subtab-tremor-segment">Benchmark Dataset Segments</button>
+                        <button type="button" class="tab-sub-btn" id="subtab-tremor-upload">Upload Kinematic CSV</button>
+                    </div>
+
+                    <!-- MODE A: BENCHMARK DATASET SEGMENT -->
+                    <div class="audio-mode-panel active" id="mode-tremor-segment-panel">
+                        <div class="record-instructions">
+                            <p><strong>Tri-Axial Inertial Sensors:</strong> Evaluates 250-sample time windows of Accelerometer (aX, aY, aZ), Gyroscope (gX, gY, gZ), and Magnetometer (mX) signals with time-blocked cross-validation.</p>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                            <label for="tremor-segment-input">Select Test Dataset Segment (1 – 111):</label>
+                            <div style="display: flex; gap: 0.75rem; align-items: center;">
+                                <input type="number" id="tremor-segment-input" min="1" max="111" value="1" style="width: 100px;">
+                                <span class="file-status" id="tremor-segment-status" style="margin:0; text-align:left; font-size: 0.85rem; color: var(--accent-color);">
+                                    Segment #1 (Rows 1–250, 9 analysis windows)
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="preset-sample-box" style="margin-top: 0.5rem; text-align: left;">
+                            <span style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-bottom: 0.35rem;">⚡ Quick Preset Test Cases:</span>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                <button type="button" class="btn btn-secondary btn-xs preset-segment-btn" data-seg="1">
+                                    🔴 Preset #1 (Parkinson's Tremor)
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-xs preset-segment-btn" data-seg="12">
+                                    🟢 Preset #12 (Healthy / Control)
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-xs preset-segment-btn" data-seg="5">
+                                    🔴 Preset #5 (Parkinson's Tremor)
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-xs preset-segment-btn" data-seg="15">
+                                    🟢 Preset #15 (Healthy / Control)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MODE B: CUSTOM CSV UPLOAD -->
+                    <div class="audio-mode-panel" id="mode-tremor-upload-panel" style="display: none;">
+                        <div class="upload-dropzone" id="tremor-dropzone">
+                            <span class="upload-icon">📊</span>
+                            <p>Drag & drop motion sensor CSV here or <span class="highlight-link">browse</span></p>
+                            <small>Expected columns: aX, aY, aZ, gX, gY, gZ, mX (Min 50 rows)</small>
+                            <input type="file" id="tremor-file-input" accept=".csv" style="display: none;">
+                        </div>
+                        <div id="selected-tremor-file-name" class="file-status">No CSV file selected (using benchmark segment)</div>
+                    </div>
+
+                    <div class="action-footer" style="margin-top: 1.25rem;">
+                        <button class="btn btn-primary btn-lg btn-block" id="btn-run-pipeline">
+                            ⚙️ Run Integrated Tri-Modal ML Pipeline
+                        </button>
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- RIGHT COLUMN: ML RESULTS & HISTORICAL ANALYSES -->
+            <div class="column-right">
+                
+                <!-- PIPELINE RESULTS CARD -->
+                <section class="card glass-card" id="results-card">
+                    <div class="card-header">
+                        <span class="card-icon">📊</span>
+                        <h4>Integrated ML Analysis Results</h4>
+                    </div>
+
+                    <div class="results-placeholder" id="results-placeholder">
+                        <div class="placeholder-icon">🔬</div>
+                        <p>Record or upload patient voice above and click <strong>"Run Integrated ML Pipeline"</strong> to execute both models.</p>
+                    </div>
+
+                    <div class="results-content" id="results-content" style="display: none;">
+                        
+                        <!-- HIGH RISK ALERT BANNER IF TRIGGERED -->
+                        <div class="high-risk-alert" id="high-risk-banner" style="display: none;">
+                            <span class="alert-icon">🔔</span>
+                            <div>
+                                <strong>HIGH CLINICAL RISK DETECTED</strong>
+                                <p>Configured clinical alert threshold triggered (Voice Confidence ≥ 60% and Age ≥ 60). Doctor notification has been sent.</p>
+                            </div>
+                        </div>
+
+                        <!-- MODEL 1: VOICE ACOUSTIC MODEL -->
+                        <div class="model-result-box">
+                            <div class="box-title">
+                                <span class="model-badge voice-tag">Model 1: Acoustic Voice Biomarker</span>
+                                <span class="result-class-badge" id="voice-class-badge">Processing...</span>
+                            </div>
+
+                            <div class="gauge-container">
+                                <div class="gauge-bar-wrapper">
+                                    <div class="gauge-bar-fill" id="voice-gauge-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="gauge-value" id="voice-score-val">0.0%</div>
+                            </div>
+
+                            <div class="sub-metrics-grid">
+                                <div class="metric-item">
+                                    <span class="metric-label">Random Forest Classifier:</span>
+                                    <span class="metric-val" id="rf-score-val">0.0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Gradient Boosting Classifier:</span>
+                                    <span class="metric-val" id="gb-score-val">0.0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Ensemble Weight Scheme:</span>
+                                    <span class="metric-val">50% RF / 50% GB</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Audio File Evaluated:</span>
+                                    <span class="metric-val" id="audio-filename-val">my_voice.wav</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- MODEL 2: ALCOHOL DEMOGRAPHIC MODEL -->
+                        <div class="model-result-box">
+                            <div class="box-title">
+                                <span class="model-badge alcohol-tag">Model 2: Alcohol Demographic Risk</span>
+                                <span class="result-risk-badge" id="alcohol-risk-badge">LOW RISK</span>
+                            </div>
+
+                            <div class="gauge-container">
+                                <div class="gauge-bar-wrapper">
+                                    <div class="gauge-bar-fill alcohol-fill" id="alcohol-gauge-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="gauge-value" id="alcohol-prob-val">0.0%</div>
+                            </div>
+
+                            <div class="sub-metrics-grid">
+                                <div class="metric-item">
+                                    <span class="metric-label">NIH PDBP Study Model:</span>
+                                    <span class="metric-val">Logistic Regression</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Patient Age:</span>
+                                    <span class="metric-val" id="res-patient-age">65 yrs</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Daily Drinks Input:</span>
+                                    <span class="metric-val" id="res-drinks-val">2.0 drinks/day</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Pre-processing Scaler:</span>
+                                    <span class="metric-val">StandardScaler</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- MODEL 3: KINEMATIC TREMOR MODEL -->
+                        <div class="model-result-box">
+                            <div class="box-title">
+                                <span class="model-badge tremor-tag">Model 3: Kinematic Tremor Biomarker</span>
+                                <span class="result-class-badge" id="tremor-class-badge">Processing...</span>
+                            </div>
+
+                            <div class="gauge-container">
+                                <div class="gauge-bar-wrapper">
+                                    <div class="gauge-bar-fill tremor-fill" id="tremor-gauge-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="gauge-value" id="tremor-score-val">0.0%</div>
+                            </div>
+
+                            <div class="sub-metrics-grid">
+                                <div class="metric-item">
+                                    <span class="metric-label">Extra Trees Classifier:</span>
+                                    <span class="metric-val" id="tremor-et-val">0.0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Random Forest Classifier:</span>
+                                    <span class="metric-val" id="tremor-rf-val">0.0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Hist Gradient Boosting:</span>
+                                    <span class="metric-val" id="tremor-gb-val">0.0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Sensor Windows Analysed:</span>
+                                    <span class="metric-val" id="tremor-windows-val">9 windows</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Sensor Source / Rows:</span>
+                                    <span class="metric-val" id="tremor-source-val">Segment #1</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Validation Framework:</span>
+                                    <span class="metric-val" id="tremor-cv-val">Time-Blocked CV (Honest Test)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TRI-MODAL CLINICAL DECISION-SUPPORT SYNTHESIS PANEL -->
+                        <div class="synthesis-panel glass-panel">
+                            <div class="synthesis-header">
+                                <span class="synthesis-icon">🩺</span>
+                                <h5>Tri-Modal Clinical Decision-Support Synthesis</h5>
+                            </div>
+                            <div class="synthesis-grid">
+                                <div class="synthesis-col">
+                                    <div class="synthesis-label">Acoustic Phonation</div>
+                                    <div class="synthesis-status" id="synth-voice-status">—</div>
+                                </div>
+                                <div class="synthesis-col">
+                                    <div class="synthesis-label">Demographic Profile</div>
+                                    <div class="synthesis-status" id="synth-alcohol-status">—</div>
+                                </div>
+                                <div class="synthesis-col">
+                                    <div class="synthesis-label">Kinematic Motion</div>
+                                    <div class="synthesis-status" id="synth-tremor-status">—</div>
+                                </div>
+                            </div>
+                            <div class="scientific-note" style="margin-top: 0.75rem;">
+                                <strong>Clinical Value of Tri-Modal Integration:</strong> Speech acoustics capture cranial nerve vocal phonation control, kinematic inertial sensors capture peripheral limb tremor oscillations (3–8 Hz), and the demographic model benchmarks epidemiological risk. Rather than forcing an artificial mathematical combination, presenting all three distinct signals simultaneously provides multi-dimensional decision-support for clinician review.
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PREVIOUS ANALYSES HISTORY TABLE CARD -->
+                <section class="card glass-card">
+                    <div class="card-header">
+                        <span class="card-icon">📜</span>
+                        <h4>Patient Analysis History</h4>
+                        <button class="btn btn-secondary btn-xs" id="btn-refresh-history">Refresh History</button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date/Time</th>
+                                    <th>Patient</th>
+                                    <th>Voice Model</th>
+                                    <th>Voice Score</th>
+                                    <th>Alcohol Risk</th>
+                                    <th>Tremor Model</th>
+                                    <th>Tremor Score</th>
+                                    <th>Alert</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-tbody">
+                                <tr>
+                                    <td colspan="9" class="text-center">Loading patient history...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- ANALYSIS DETAIL MODAL -->
+    <div class="modal-overlay" id="detail-modal" style="display: none;">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h4 id="modal-title">Analysis Record Details</h4>
+                <button class="modal-close" id="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body-content">
+                Loading analysis details...
+            </div>
+        </div>
+    </div>
+
+    <!-- LOADING OVERLAY -->
+    <div class="loading-overlay" id="loading-spinner" style="display: none;">
+        <div class="spinner-box">
+            <div class="spinner"></div>
+            <p id="spinner-text">Executing Voice & Alcohol ML Models...</p>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
