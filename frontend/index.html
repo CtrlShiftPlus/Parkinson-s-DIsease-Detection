@@ -22,6 +22,14 @@
         </div>
 
         <div class="nav-actions" id="nav-user-controls" style="display: none;">
+            <!-- Private Chat Button -->
+            <div class="nav-notification-wrapper" id="nav-chat-wrapper">
+                <button class="icon-btn" id="nav-chat-btn" title="Private Patient-Doctor Chat">
+                    💬
+                    <span class="notif-badge" id="nav-chat-unread-badge" style="display: none;">0</span>
+                </button>
+            </div>
+
             <!-- Doctor Notification Bell -->
             <div class="nav-notification-wrapper" id="doctor-notif-bell" style="display: none;">
                 <button class="icon-btn" id="notif-btn" title="Doctor Risk Notifications">
@@ -29,6 +37,7 @@
                     <span class="notif-badge" id="notif-count">0</span>
                 </button>
             </div>
+
 
             <div class="user-profile-badge">
                 <span class="user-avatar" id="user-avatar">👤</span>
@@ -122,6 +131,125 @@
             </div>
         </div>
 
+        <!-- PATIENT ASSIGNED DOCTOR BANNER (VISIBLE TO PATIENT ROLE) -->
+        <section class="patient-doctor-banner" id="patient-doctor-banner" style="display: none;">
+            <div class="doctor-profile-info">
+                <div class="doctor-avatar-circle">🩺</div>
+                <div>
+                    <div class="doctor-meta-title">
+                        <span id="pat-doctor-name">Dr. Sarah Jenkins (Neurology)</span>
+                        <span class="badge badge-success" id="pat-doctor-status-badge">Active Care</span>
+                    </div>
+                    <div class="doctor-meta-sub">
+                        <span id="pat-doctor-email">doctor@hospital.org</span>
+                        <span>•</span>
+                        <span id="pat-assigned-date">Primary Neurologist</span>
+                    </div>
+                </div>
+            </div>
+            <div class="doctor-action-btns">
+                <button class="btn btn-primary btn-sm" id="btn-patient-open-chat">
+                    💬 Private Chat with Doctor
+                    <span class="tab-badge" id="pat-chat-unread-badge" style="display: none;">0</span>
+                </button>
+                <button class="btn btn-secondary btn-sm" id="btn-request-consultation">
+                    📅 Request Follow-up Consultation
+                </button>
+                <button class="btn btn-outline btn-sm" id="btn-change-doctor">
+                    🔄 Select / Change Doctor
+                </button>
+            </div>
+        </section>
+
+        <!-- DOCTOR NAVIGATION BAR & CONTROLS (VISIBLE TO DOCTOR ROLE) -->
+        <div class="doctor-nav-bar" id="doctor-nav-bar" style="display: none;">
+            <button class="doc-tab-btn active" id="tab-doc-patients">
+                👥 My Assigned Patients <span class="tab-badge" id="doc-patients-count-badge">0</span>
+            </button>
+            <button class="doc-tab-btn" id="tab-doc-pipeline">
+                🔬 Multi-Modal Screening & Prediction
+            </button>
+            <button class="doc-tab-btn" id="tab-doc-alerts">
+                🔔 Risk Alert Center <span class="tab-badge" id="doc-alerts-count-badge">0 New</span>
+            </button>
+            <button class="doc-tab-btn" id="tab-doc-chat">
+                💬 Patient Messages <span class="tab-badge" id="doc-chat-count-badge" style="display: none;">0</span>
+            </button>
+        </div>
+
+        <!-- DOCTOR ASSIGNED PATIENTS SECTION (VISIBLE IN PATIENTS TAB) -->
+        <section class="dashboard-section" id="doctor-patients-section" style="display: none;">
+            <div class="doctor-stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div>
+                        <div class="stat-val" id="doc-stat-total-patients">0</div>
+                        <div class="stat-lbl">Assigned Patients</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔔</div>
+                    <div>
+                        <div class="stat-val" id="doc-stat-alerts">0</div>
+                        <div class="stat-lbl">Clinical Risk Alerts</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">💬</div>
+                    <div>
+                        <div class="stat-val" id="doc-stat-unread-messages">0</div>
+                        <div class="stat-lbl">Unread Patient Messages</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PENDING ASSIGNMENT REQUESTS (IF ANY) -->
+            <div id="pending-requests-card" class="card glass-card" style="display: none; margin-bottom: 1.5rem; border-color: rgba(217, 119, 6, 0.4);">
+                <div class="card-header">
+                    <span class="card-icon">⏳</span>
+                    <h4>Pending Patient Assignment Requests</h4>
+                </div>
+                <div id="pending-requests-list" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem;">
+                    <!-- Injected dynamically -->
+                </div>
+            </div>
+
+            <div class="card glass-card assigned-table-card">
+                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="card-icon">📋</span>
+                        <h4>Assigned Clinical Patients</h4>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-secondary btn-sm" id="btn-refresh-patients">🔄 Refresh Patients</button>
+                        <button class="btn btn-primary btn-sm" id="btn-open-assign-modal">➕ Direct Assign Patient</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Patient Code</th>
+                                <th>Name / Email</th>
+                                <th>Assigned Date</th>
+                                <th>Total Tests</th>
+                                <th>Latest Prediction</th>
+                                <th>Voice Score</th>
+                                <th>Tremor Score</th>
+                                <th>Alcohol Risk</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="assigned-patients-tbody">
+                            <tr>
+                                <td colspan="9" class="text-center">Loading assigned patients...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <!-- DOCTOR ALERT NOTIFICATION CENTER PANEL (VISIBLE TO DOCTOR ROLE) -->
         <section class="dashboard-section" id="doctor-notifications-section" style="display: none;">
             <div class="section-header">
@@ -133,7 +261,10 @@
             </div>
         </section>
 
-        <div class="grid-two-columns">
+        <!-- SCREENING PIPELINE CONTAINER -->
+        <div id="screening-pipeline-container">
+            <div class="grid-two-columns">
+
             
             <!-- LEFT COLUMN: INPUTS & RECORDING -->
             <div class="column-left">
@@ -505,8 +636,153 @@
             </div>
 
         </div>
+        </div> <!-- End of screening-pipeline-container -->
 
     </main>
+
+    <!-- PRIVATE CHAT MODAL -->
+    <div class="modal-overlay" id="chat-modal" style="display: none;">
+        <div class="modal-card glass-panel chat-modal-window">
+            <div class="chat-top-header">
+                <div class="chat-counterpart-info">
+                    <div class="doctor-avatar-circle" style="width: 42px; height: 42px; font-size: 1.3rem;">💬</div>
+                    <div>
+                        <strong id="chat-counterpart-name" style="font-size: 1.05rem;">Private Consultation</strong>
+                        <div id="chat-counterpart-role" style="font-size: 0.75rem; color: var(--text-secondary);">One-to-One Encrypted Clinical Consultation</div>
+                    </div>
+                </div>
+                <button class="modal-close" id="chat-modal-close-btn">&times;</button>
+            </div>
+            
+            <div class="chat-disclaimer-bar">
+                <span>⚠️</span>
+                <span><strong>Clinical Notice:</strong> Intended for discussing symptoms, reports, and care guidance. Does not replace emergency medical care or formal clinical diagnosis.</span>
+            </div>
+
+            <div class="chat-layout">
+                <!-- DOCTOR ONLY: ASSIGNED PATIENT SELECTOR SIDEBAR -->
+                <div class="chat-sidebar" id="chat-sidebar" style="display: none;">
+                    <div class="chat-sidebar-header">Assigned Patients</div>
+                    <div class="chat-patient-list" id="chat-patient-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <!-- MAIN CHAT STREAM -->
+                <div class="chat-main-area">
+                    <div class="chat-messages-container" id="chat-messages-container">
+                        <div class="empty-state">Loading consultation messages...</div>
+                    </div>
+
+                    <form class="chat-input-bar" id="chat-form">
+                        <input type="text" class="chat-input-field" id="chat-input" placeholder="Type clinical inquiry, symptoms update, or reply..." autocomplete="off" required maxlength="2500">
+                        <button type="submit" class="btn btn-primary" id="btn-send-chat">Send ✉️</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DOCTOR VIEW: PATIENT DETAILS & CLINICAL HISTORY MODAL -->
+    <div class="modal-overlay" id="patient-detail-modal" style="display: none;">
+        <div class="modal-card glass-panel" style="width: 850px; max-width: 95vw;">
+            <div class="modal-header">
+                <div>
+                    <h4 id="pat-modal-title">Patient Clinical File</h4>
+                    <span id="pat-modal-sub" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
+                </div>
+                <button class="modal-close" id="pat-modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" id="pat-modal-body">
+                <div class="table-responsive" style="margin-top: 1rem;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date/Time</th>
+                                <th>Voice Prediction</th>
+                                <th>Voice Score</th>
+                                <th>Tremor Prediction</th>
+                                <th>Tremor Score</th>
+                                <th>Alcohol Risk</th>
+                                <th>Alert</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pat-modal-tbody">
+                            <tr>
+                                <td colspan="8" class="text-center">Loading patient records...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 0.75rem;">
+                    <button class="btn btn-primary btn-sm" id="btn-modal-open-patient-chat">💬 Open Chat with Patient</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PATIENT VIEW: SELECT / CHANGE DOCTOR MODAL -->
+    <div class="modal-overlay" id="doctor-select-modal" style="display: none;">
+        <div class="modal-card glass-panel" style="width: 550px; max-width: 95vw;">
+            <div class="modal-header">
+                <h4>Select Primary Care Neurologist</h4>
+                <button class="modal-close" id="doc-select-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Select an authorized neurologist from the hospital clinical directory to link as your dedicated primary physician:
+                </p>
+                <div id="doctor-select-list" style="display: flex; flex-direction: column; gap: 0.75rem; max-height: 300px; overflow-y: auto;">
+                    <div class="empty-state">Loading registered physicians...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PATIENT VIEW: REQUEST CONSULTATION MODAL -->
+    <div class="modal-overlay" id="consultation-modal" style="display: none;">
+        <div class="modal-card glass-panel" style="width: 500px; max-width: 95vw;">
+            <div class="modal-header">
+                <h4>Request Medical Follow-up Consultation</h4>
+                <button class="modal-close" id="consultation-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Your request will generate an alert in your assigned doctor's clinical risk center with your latest tri-modal assessment data.
+                </p>
+                <form id="consultation-form">
+                    <div class="form-group">
+                        <label for="consultation-notes">Notes / Symptoms to Discuss:</label>
+                        <textarea id="consultation-notes" rows="4" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); padding: 0.75rem; font-family: var(--font-body);" placeholder="e.g. Inquiries regarding recent tremor analysis score, follow-up on medication, or speech fluctuations..."></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1rem;">Submit Consultation Request</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- DOCTOR VIEW: DIRECT ASSIGN PATIENT MODAL -->
+    <div class="modal-overlay" id="direct-assign-modal" style="display: none;">
+        <div class="modal-card glass-panel" style="width: 480px; max-width: 95vw;">
+            <div class="modal-header">
+                <h4>Direct Assign Patient</h4>
+                <button class="modal-close" id="assign-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Link a registered patient account directly to your clinical panel:
+                </p>
+                <form id="direct-assign-form">
+                    <div class="form-group">
+                        <label for="assign-patient-email">Patient Email Address:</label>
+                        <input type="email" id="assign-patient-email" placeholder="patient@example.com" required style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary);">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1rem;">Assign to My Panel</button>
+                </form>
+            </div>
+        </div>
+    </div>
 
     <!-- ANALYSIS DETAIL MODAL -->
     <div class="modal-overlay" id="detail-modal" style="display: none;">
@@ -525,10 +801,11 @@
     <div class="loading-overlay" id="loading-spinner" style="display: none;">
         <div class="spinner-box">
             <div class="spinner"></div>
-            <p id="spinner-text">Executing Voice & Alcohol ML Models...</p>
+            <p id="spinner-text">Executing Voice, Alcohol, and Tremor ML Models...</p>
         </div>
     </div>
 
     <script src="/static/app.js"></script>
 </body>
 </html>
+

@@ -62,20 +62,58 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     patient_name = Column(String, nullable=False)
-    patient_age = Column(Float, nullable=False)
-    voice_confidence = Column(Float, nullable=False)
-    analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=False)
+    patient_age = Column(Float, nullable=True, default=0.0)
+    voice_confidence = Column(Float, nullable=True, default=0.0)
+    analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=True, default=0)
+    notification_type = Column(String, default="clinical_alert", nullable=False) # clinical_alert, assessment_completed, chat_message, consultation_request
+    title = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    target_url = Column(String, nullable=True)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    patient = relationship("User", foreign_keys=[patient_id])
+    doctor = relationship("User", foreign_keys=[doctor_id])
+
+class DoctorPatientAssignment(Base):
+    __tablename__ = "doctor_patient_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True, nullable=False)
+    doctor_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    status = Column(String, default="active", nullable=False)  # "active", "pending", "declined"
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    patient = relationship("User", foreign_keys=[patient_id], backref="assigned_doctor_rel")
+    doctor = relationship("User", foreign_keys=[doctor_id], backref="assigned_patients_rel")
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    doctor_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    patient = relationship("User", foreign_keys=[patient_id])
+    doctor = relationship("User", foreign_keys=[doctor_id])
+    sender = relationship("User", foreign_keys=[sender_id])
 
 def init_db():
     Base.metadata.create_all(bind=engine)
     # Lightweight schema migration for existing SQLite databases
     from sqlalchemy import text
     with engine.connect() as conn:
-        new_columns = [
+        # Analyses columns
+        analyses_columns = [
             ("tremor_score", "FLOAT"),
             ("tremor_label", "VARCHAR"),
             ("tremor_et_score", "FLOAT"),
@@ -83,9 +121,24 @@ def init_db():
             ("tremor_gb_score", "FLOAT"),
             ("tremor_source", "VARCHAR"),
         ]
-        for col_name, col_type in new_columns:
+        for col_name, col_type in analyses_columns:
             try:
                 conn.execute(text(f"ALTER TABLE analyses ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
+
+        # Notifications columns
+        notif_columns = [
+            ("doctor_id", "INTEGER"),
+            ("notification_type", "VARCHAR DEFAULT 'clinical_alert'"),
+            ("title", "VARCHAR"),
+            ("description", "TEXT"),
+            ("target_url", "VARCHAR"),
+        ]
+        for col_name, col_type in notif_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE notifications ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
             except Exception:
                 pass
@@ -96,4 +149,5 @@ def get_db():
         yield db
     finally:
         db.close()
+
 

@@ -64,3 +64,46 @@ def get_doctor_user(current_user: User = Depends(get_current_user)) -> User:
             detail="Access restricted to Doctor role only"
         )
     return current_user
+
+def get_patient_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted to Patient role only"
+        )
+    return current_user
+
+def verify_patient_doctor_access(current_user: User, patient_id: int, db: Session) -> bool:
+    """
+    Enforces strict role-based access control and patient isolation:
+    - If current_user is a Patient: MUST be their own ID. Cannot access other patients' data.
+    - If current_user is a Doctor: Patient MUST be actively assigned to this doctor.
+    - Otherwise raises 403 Forbidden.
+    """
+    if current_user.role == "patient":
+        if current_user.id != patient_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized: Patients cannot access other patients' records, chat, or notifications."
+            )
+        return True
+    
+    if current_user.role == "doctor":
+        from backend.database import DoctorPatientAssignment
+        assignment = db.query(DoctorPatientAssignment).filter(
+            DoctorPatientAssignment.doctor_id == current_user.id,
+            DoctorPatientAssignment.patient_id == patient_id,
+            DoctorPatientAssignment.status == "active"
+        ).first()
+        if not assignment:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized: This patient is not assigned to you."
+            )
+        return True
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Unauthorized: Access denied."
+    )
+

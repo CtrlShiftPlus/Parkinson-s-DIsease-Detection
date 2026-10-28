@@ -21,9 +21,16 @@ if str(BASE_DIR) not in sys.path:
 
 from main import VoiceModelRunner, AlcoholModelRunner, DEFAULT_SAMPLE_WAV
 from tremor_runner import TremorModelRunner
-from backend.database import init_db, get_db, User, AnalysisRecord, Notification
-from backend.auth import hash_password, verify_password, create_access_token, get_current_user, get_doctor_user
-from backend.alert_engine import evaluate_alert_rules, get_alert_settings
+from backend.database import (
+    init_db, get_db, User, AnalysisRecord, Notification,
+    DoctorPatientAssignment, ChatMessage
+)
+from backend.auth import (
+    hash_password, verify_password, create_access_token,
+    get_current_user, get_doctor_user, get_patient_user, verify_patient_doctor_access
+)
+from backend.alert_engine import evaluate_alert_rules, get_alert_settings, create_notification, get_assigned_doctor_id
+
 
 init_db()
 
@@ -90,29 +97,56 @@ def seed_demo_users():
     try:
         doc = db.query(User).filter(User.role == "doctor").first()
         if not doc:
-            doc_user = User(
+            doc = User(
                 email="doctor@hospital.org",
                 password_hash=hash_password("DocPass123"),
                 full_name="Dr. Sarah Jenkins (Neurology)",
                 role="doctor"
             )
-            db.add(doc_user)
+            db.add(doc)
+            db.commit()
+            db.refresh(doc)
 
         pat = db.query(User).filter(User.role == "patient").first()
         if not pat:
-            pat_user = User(
+            pat = User(
                 email="patient@example.com",
                 password_hash=hash_password("PatPass123"),
                 full_name="Arthur Pendelton",
                 role="patient"
             )
-            db.add(pat_user)
-        db.commit()
+            db.add(pat)
+            db.commit()
+            db.refresh(pat)
+
+        # Seed primary doctor-patient assignment for demo users if none exists
+        if doc and pat:
+            assignment = db.query(DoctorPatientAssignment).filter(
+                DoctorPatientAssignment.patient_id == pat.id
+            ).first()
+            if not assignment:
+                assignment = DoctorPatientAssignment(
+                    patient_id=pat.id,
+                    doctor_id=doc.id,
+                    status="active",
+                    notes="Primary Neurologist"
+                )
+                db.add(assignment)
+                db.commit()
+
+            # Ensure legacy notifications are attributed to the primary doctor
+            db.query(Notification).filter(Notification.doctor_id == None).update(
+                {Notification.doctor_id: doc.id},
+                synchronize_session=False
+            )
+            db.commit()
+
     except Exception as e:
         db.rollback()
         print("Demo seed note:", e)
 
 seed_demo_users()
+
 
 @app.post("/api/auth/register", response_model=TokenResponse)
 def register(data: RegisterSchema, db: Session = Depends(get_db)):
@@ -252,18 +286,37 @@ async def run_analysis(
         db.commit()
         db.refresh(record)
 
+        assigned_doc_id = get_assigned_doctor_id(db, current_user.id)
+
         alert_triggered = evaluate_alert_rules(
             db=db,
             patient_user=current_user,
             patient_name=patient_name.strip(),
             patient_age=patient_age,
             voice_confidence=record.voice_score,
-            analysis_id=record.id
+            analysis_id=record.id,
+            doctor_id=assigned_doc_id
         )
 
         if alert_triggered:
             record.alert_triggered = True
             db.commit()
+        elif assigned_doc_id:
+            # Generate assessment completed notification for the assigned doctor
+            create_notification(
+                db=db,
+                patient_id=current_user.id,
+                doctor_id=assigned_doc_id,
+                patient_name=patient_name.strip(),
+                patient_age=patient_age,
+                voice_confidence=record.voice_score,
+                analysis_id=record.id,
+                notification_type="assessment_completed",
+                title=f"New Assessment: {patient_name.strip()}",
+                description=f"Assessment complete. Voice: {record.voice_label} ({record.voice_score:.1f}%), Tremor: {record.tremor_score:.1f}%, Alcohol Risk: {record.alcohol_risk}.",
+                target_url=f"#analysis-{record.id}"
+            )
+
 
         return {
             "analysis_id": record.id,
@@ -350,14 +403,46 @@ async def run_standalone_tremor(
             except Exception:
                 pass
 
+class AssignmentRequestSchema(BaseModel):
+    doctor_id: int
+    auto_accept: Optional[bool] = True
+
+class DirectAssignSchema(BaseModel):
+    patient_id: Optional[int] = None
+    patient_email: Optional[str] = None
+
+class ReassignSchema(BaseModel):
+    patient_id: int
+    new_doctor_id: int
+
+class ChatSendSchema(BaseModel):
+    patient_id: Optional[int] = None
+    message: str
+
+class ConsultationRequestSchema(BaseModel):
+    notes: Optional[str] = "Patient requested a follow-up consultation regarding Parkinson's screening results."
+
 @app.get("/api/analysis/history")
 def get_analysis_history(
+    patient_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role == "doctor":
-        records = db.query(AnalysisRecord).order_by(AnalysisRecord.created_at.desc()).all()
+        if patient_id is not None:
+            verify_patient_doctor_access(current_user, patient_id, db)
+            records = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == patient_id).order_by(AnalysisRecord.created_at.desc()).all()
+        else:
+            # Doctors ONLY see records for patients assigned to them
+            assigned_patient_ids = [
+                a.patient_id for a in db.query(DoctorPatientAssignment).filter(
+                    DoctorPatientAssignment.doctor_id == current_user.id,
+                    DoctorPatientAssignment.status == "active"
+                ).all()
+            ]
+            records = db.query(AnalysisRecord).filter(AnalysisRecord.user_id.in_(assigned_patient_ids)).order_by(AnalysisRecord.created_at.desc()).all()
     else:
+        # Patients can strictly ONLY see their own records
         records = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == current_user.id).order_by(AnalysisRecord.created_at.desc()).all()
 
     return [
@@ -397,8 +482,8 @@ def get_analysis_detail(
     if not record:
         raise HTTPException(status_code=404, detail="Analysis record not found.")
 
-    if current_user.role != "doctor" and record.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Unauthorized access to this patient record.")
+    # Strict server-side RBAC and IDOR validation
+    verify_patient_doctor_access(current_user, record.user_id, db)
 
     return {
         "id": record.id,
@@ -423,13 +508,24 @@ def get_analysis_detail(
         "created_at": record.created_at.strftime("%Y-%m-%d %H:%M:%S")
     }
 
+# =============================================================================
+# NOTIFICATION SYSTEM (DOCTOR & PATIENT)
+# =============================================================================
+
 @app.get("/api/notifications")
 def get_notifications(
     current_user: User = Depends(get_doctor_user),
     db: Session = Depends(get_db)
 ):
-    notifs = db.query(Notification).order_by(Notification.created_at.desc()).all()
-    unread_count = db.query(Notification).filter(Notification.is_read == False).count()
+    # A doctor only receives notifications for their own assigned patients
+    notifs = db.query(Notification).filter(
+        Notification.doctor_id == current_user.id
+    ).order_by(Notification.created_at.desc()).all()
+
+    unread_count = db.query(Notification).filter(
+        Notification.doctor_id == current_user.id,
+        Notification.is_read == False
+    ).count()
 
     return {
         "unread_count": unread_count,
@@ -441,6 +537,10 @@ def get_notifications(
                 "patient_age": n.patient_age,
                 "voice_confidence": n.voice_confidence,
                 "analysis_id": n.analysis_id,
+                "notification_type": n.notification_type or "clinical_alert",
+                "title": n.title or f"Alert: {n.patient_name}",
+                "description": n.description or f"Voice confidence: {n.voice_confidence:.1f}%",
+                "target_url": n.target_url or f"#analysis-{n.analysis_id}",
                 "is_read": n.is_read,
                 "created_at": n.created_at.strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -458,30 +558,625 @@ def mark_notification_read(
     if not notif:
         raise HTTPException(status_code=404, detail="Notification not found.")
 
+    if notif.doctor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized: Notification belongs to a different clinician.")
+
     notif.is_read = True
     db.commit()
     return {"message": "Notification marked as read.", "id": notif.id}
+
+# =============================================================================
+# DOCTOR-PATIENT ASSIGNMENT MANAGEMENT
+# =============================================================================
+
+@app.get("/api/doctors")
+def list_doctors(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    docs = db.query(User).filter(User.role == "doctor").all()
+    return [
+        {
+            "id": d.id,
+            "doctor_code": f"DOC-{d.id:04d}",
+            "full_name": d.full_name,
+            "email": d.email
+        }
+        for d in docs
+    ]
 
 @app.get("/api/patients")
 def get_patients(
     current_user: User = Depends(get_doctor_user),
     db: Session = Depends(get_db)
 ):
-    patients = db.query(User).filter(User.role == "patient").all()
-    return [
-        {
+    # Strictly return only patients actively assigned to this doctor
+    assignments = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.doctor_id == current_user.id,
+        DoctorPatientAssignment.status == "active"
+    ).all()
+
+    assigned_patient_ids = [a.patient_id for a in assignments]
+    patients = db.query(User).filter(User.id.in_(assigned_patient_ids)).all()
+    assignment_map = {a.patient_id: a for a in assignments}
+
+    result = []
+    for p in patients:
+        a = assignment_map.get(p.id)
+        latest_analysis = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == p.id).order_by(AnalysisRecord.created_at.desc()).first()
+        unread_chat_count = db.query(ChatMessage).filter(
+            ChatMessage.patient_id == p.id,
+            ChatMessage.doctor_id == current_user.id,
+            ChatMessage.sender_id == p.id,
+            ChatMessage.is_read == False
+        ).count()
+
+        result.append({
             "id": p.id,
+            "patient_code": f"PAT-{p.id:04d}",
             "full_name": p.full_name,
             "email": p.email,
+            "assignment_status": a.status if a else "unassigned",
+            "assigned_date": a.created_at.strftime("%Y-%m-%d") if a else "N/A",
             "total_analyses": db.query(AnalysisRecord).filter(AnalysisRecord.user_id == p.id).count(),
+            "latest_prediction": latest_analysis.voice_label if latest_analysis else "No assessments yet",
+            "latest_voice_score": latest_analysis.voice_score if latest_analysis else None,
+            "latest_tremor_score": latest_analysis.tremor_score if latest_analysis else None,
+            "latest_alcohol_risk": latest_analysis.alcohol_risk if latest_analysis else "N/A",
+            "latest_date": latest_analysis.created_at.strftime("%Y-%m-%d %H:%M") if latest_analysis else "None",
+            "has_high_risk": latest_analysis.alert_triggered if latest_analysis else False,
+            "unread_chat_count": unread_chat_count,
             "created_at": p.created_at.strftime("%Y-%m-%d")
+        })
+    return result
+
+@app.get("/api/patients/{patient_id}")
+def get_patient_detail(
+    patient_id: int,
+    current_user: User = Depends(get_doctor_user),
+    db: Session = Depends(get_db)
+):
+    verify_patient_doctor_access(current_user, patient_id, db)
+    patient = db.query(User).filter(User.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    analyses = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == patient_id).order_by(AnalysisRecord.created_at.desc()).all()
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == patient_id,
+        DoctorPatientAssignment.doctor_id == current_user.id,
+        DoctorPatientAssignment.status == "active"
+    ).first()
+
+    return {
+        "id": patient.id,
+        "patient_code": f"PAT-{patient.id:04d}",
+        "full_name": patient.full_name,
+        "email": patient.email,
+        "assignment_status": assignment.status if assignment else "active",
+        "assigned_at": assignment.created_at.strftime("%Y-%m-%d %H:%M") if assignment else "N/A",
+        "total_analyses": len(analyses),
+        "analyses": [
+            {
+                "id": a.id,
+                "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "voice_label": a.voice_label,
+                "voice_score": a.voice_score,
+                "rf_score": a.rf_score,
+                "gb_score": a.gb_score,
+                "alcohol_prob": a.alcohol_prob,
+                "alcohol_risk": a.alcohol_risk,
+                "tremor_label": a.tremor_label,
+                "tremor_score": a.tremor_score,
+                "tremor_source": a.tremor_source,
+                "alert_triggered": a.alert_triggered,
+                "audio_filename": a.audio_filename
+            }
+            for a in analyses
+        ]
+    }
+
+@app.get("/api/assignment/my-doctor")
+def get_my_doctor(
+    current_user: User = Depends(get_patient_user),
+    db: Session = Depends(get_db)
+):
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == current_user.id,
+        DoctorPatientAssignment.status == "active"
+    ).first()
+
+    if not assignment:
+        # Check pending request
+        pending = db.query(DoctorPatientAssignment).filter(
+            DoctorPatientAssignment.patient_id == current_user.id,
+            DoctorPatientAssignment.status == "pending"
+        ).first()
+        if pending:
+            doc = db.query(User).filter(User.id == pending.doctor_id).first()
+            return {
+                "has_doctor": False,
+                "status": "pending",
+                "doctor": {
+                    "id": doc.id,
+                    "doctor_code": f"DOC-{doc.id:04d}",
+                    "full_name": doc.full_name,
+                    "email": doc.email
+                } if doc else None,
+                "assignment_id": pending.id
+            }
+        return {"has_doctor": False, "status": "unassigned", "doctor": None, "assignment_id": None}
+
+    doc = db.query(User).filter(User.id == assignment.doctor_id).first()
+    unread_chat_count = db.query(ChatMessage).filter(
+        ChatMessage.patient_id == current_user.id,
+        ChatMessage.doctor_id == assignment.doctor_id,
+        ChatMessage.sender_id == assignment.doctor_id,
+        ChatMessage.is_read == False
+    ).count()
+
+    return {
+        "has_doctor": True,
+        "status": "active",
+        "doctor": {
+            "id": doc.id,
+            "doctor_code": f"DOC-{doc.id:04d}",
+            "full_name": doc.full_name,
+            "email": doc.email
+        } if doc else None,
+        "assignment_id": assignment.id,
+        "assigned_date": assignment.created_at.strftime("%Y-%m-%d"),
+        "unread_chat_count": unread_chat_count
+    }
+
+@app.post("/api/assignment/request")
+def request_doctor_assignment(
+    data: AssignmentRequestSchema,
+    current_user: User = Depends(get_patient_user),
+    db: Session = Depends(get_db)
+):
+    doctor = db.query(User).filter(User.id == data.doctor_id, User.role == "doctor").first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found.")
+
+    status_to_set = "active" if data.auto_accept else "pending"
+
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == current_user.id
+    ).first()
+
+    if assignment:
+        assignment.doctor_id = doctor.id
+        assignment.status = status_to_set
+        assignment.updated_at = datetime.datetime.utcnow()
+    else:
+        assignment = DoctorPatientAssignment(
+            patient_id=current_user.id,
+            doctor_id=doctor.id,
+            status=status_to_set
+        )
+        db.add(assignment)
+
+    db.commit()
+    db.refresh(assignment)
+
+    # Notify doctor of assignment or consultation link
+    create_notification(
+        db=db,
+        patient_id=current_user.id,
+        doctor_id=doctor.id,
+        patient_name=current_user.full_name,
+        notification_type="consultation_request" if status_to_set == "pending" else "clinical_alert",
+        title=f"Patient Assignment: {current_user.full_name}",
+        description=f"Patient {current_user.full_name} is now {'assigned to' if status_to_set == 'active' else 'requesting'} your clinical care.",
+        target_url=f"#patient-{current_user.id}"
+    )
+
+    return {
+        "message": f"Successfully {'assigned to' if status_to_set == 'active' else 'requested'} Dr. {doctor.full_name}.",
+        "status": status_to_set,
+        "assignment_id": assignment.id,
+        "doctor": {
+            "id": doctor.id,
+            "full_name": doctor.full_name,
+            "email": doctor.email
         }
-        for p in patients
+    }
+
+@app.get("/api/assignment/pending")
+def get_pending_assignments(
+    current_user: User = Depends(get_doctor_user),
+    db: Session = Depends(get_db)
+):
+    pending = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.doctor_id == current_user.id,
+        DoctorPatientAssignment.status == "pending"
+    ).all()
+
+    patient_ids = [p.patient_id for p in pending]
+    patients = {p.id: p for p in db.query(User).filter(User.id.in_(patient_ids)).all()}
+
+    return [
+        {
+            "assignment_id": p.id,
+            "patient_id": p.patient_id,
+            "patient_name": patients[p.patient_id].full_name if p.patient_id in patients else "Unknown Patient",
+            "patient_email": patients[p.patient_id].email if p.patient_id in patients else "",
+            "requested_at": p.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        for p in pending
     ]
+
+@app.post("/api/assignment/{assignment_id}/accept")
+def accept_assignment(
+    assignment_id: int,
+    current_user: User = Depends(get_doctor_user),
+    db: Session = Depends(get_db)
+):
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.id == assignment_id
+    ).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment record not found.")
+
+    if assignment.doctor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized: Assignment request not directed to you.")
+
+    assignment.status = "active"
+    assignment.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Patient assignment accepted.", "assignment_id": assignment.id}
+
+@app.post("/api/assignment/{assignment_id}/decline")
+def decline_assignment(
+    assignment_id: int,
+    current_user: User = Depends(get_doctor_user),
+    db: Session = Depends(get_db)
+):
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.id == assignment_id
+    ).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment record not found.")
+
+    if assignment.doctor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Unauthorized: Assignment request not directed to you.")
+
+    assignment.status = "declined"
+    assignment.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Patient assignment declined.", "assignment_id": assignment.id}
+
+@app.post("/api/assignment/assign")
+def direct_assign_patient(
+    data: DirectAssignSchema,
+    current_user: User = Depends(get_doctor_user),
+    db: Session = Depends(get_db)
+):
+    if data.patient_id:
+        patient = db.query(User).filter(User.id == data.patient_id, User.role == "patient").first()
+    elif data.patient_email:
+        patient = db.query(User).filter(User.email == data.patient_email.lower().strip(), User.role == "patient").first()
+    else:
+        raise HTTPException(status_code=400, detail="Provide patient_id or patient_email.")
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient account not found.")
+
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == patient.id
+    ).first()
+
+    if assignment:
+        assignment.doctor_id = current_user.id
+        assignment.status = "active"
+        assignment.updated_at = datetime.datetime.utcnow()
+    else:
+        assignment = DoctorPatientAssignment(
+            patient_id=patient.id,
+            doctor_id=current_user.id,
+            status="active"
+        )
+        db.add(assignment)
+
+    db.commit()
+    db.refresh(assignment)
+    return {"message": f"Patient {patient.full_name} assigned successfully.", "patient_id": patient.id}
+
+@app.post("/api/assignment/reassign")
+def reassign_patient(
+    data: ReassignSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Authorization: Patient reassigning self, or current doctor reassigning
+    if current_user.role == "patient" and current_user.id != data.patient_id:
+        raise HTTPException(status_code=403, detail="Unauthorized: Cannot reassign another patient.")
+    if current_user.role == "doctor":
+        verify_patient_doctor_access(current_user, data.patient_id, db)
+
+    new_doc = db.query(User).filter(User.id == data.new_doctor_id, User.role == "doctor").first()
+    if not new_doc:
+        raise HTTPException(status_code=404, detail="Target doctor not found.")
+
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == data.patient_id
+    ).first()
+
+    if assignment:
+        assignment.doctor_id = new_doc.id
+        assignment.status = "active"
+        assignment.updated_at = datetime.datetime.utcnow()
+    else:
+        assignment = DoctorPatientAssignment(
+            patient_id=data.patient_id,
+            doctor_id=new_doc.id,
+            status="active"
+        )
+        db.add(assignment)
+
+    db.commit()
+    return {"message": f"Successfully reassigned to Dr. {new_doc.full_name}."}
+
+# =============================================================================
+# PRIVATE PATIENT-DOCTOR CHAT
+# =============================================================================
+
+@app.get("/api/chat/messages")
+def get_chat_messages(
+    patient_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role == "patient":
+        target_patient_id = current_user.id
+    else:
+        if patient_id is None:
+            raise HTTPException(status_code=400, detail="patient_id is required for doctor access.")
+        target_patient_id = patient_id
+        verify_patient_doctor_access(current_user, target_patient_id, db)
+
+    # Active assignment check
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == target_patient_id,
+        DoctorPatientAssignment.status == "active"
+    ).first()
+
+    if not assignment:
+        return {
+            "assignment": None,
+            "messages": [],
+            "total": 0,
+            "disclaimer": "This chat is for clinical consultation and symptoms follow-up only. It does not replace emergency medical care."
+        }
+
+    # Fetch chronologically ordered messages
+    messages = db.query(ChatMessage).filter(
+        ChatMessage.patient_id == target_patient_id,
+        ChatMessage.doctor_id == assignment.doctor_id
+    ).order_by(ChatMessage.created_at.asc()).all()
+
+    patient_user = db.query(User).filter(User.id == target_patient_id).first()
+    doctor_user = db.query(User).filter(User.id == assignment.doctor_id).first()
+
+    return {
+        "assignment": {
+            "patient_id": target_patient_id,
+            "patient_name": patient_user.full_name if patient_user else "Patient",
+            "doctor_id": assignment.doctor_id,
+            "doctor_name": doctor_user.full_name if doctor_user else "Doctor"
+        },
+        "messages": [
+            {
+                "id": m.id,
+                "patient_id": m.patient_id,
+                "doctor_id": m.doctor_id,
+                "sender_id": m.sender_id,
+                "sender_name": patient_user.full_name if m.sender_id == target_patient_id else (doctor_user.full_name if doctor_user else "Doctor"),
+                "sender_role": "patient" if m.sender_id == target_patient_id else "doctor",
+                "is_self": m.sender_id == current_user.id,
+                "message": m.message,
+                "is_read": m.is_read,
+                "created_at": m.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            for m in messages
+        ],
+        "total": len(messages),
+        "disclaimer": "This chat is intended for discussing symptoms, follow-up questions, reports, and general care guidance. It does not replace professional medical judgment."
+    }
+
+@app.post("/api/chat/messages")
+def send_chat_message(
+    data: ChatSendSchema,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    msg_text = data.message.strip()
+    if not msg_text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    if len(msg_text) > 2500:
+        raise HTTPException(status_code=400, detail="Message exceeds maximum length (2500 characters).")
+
+    if current_user.role == "patient":
+        target_patient_id = current_user.id
+        assignment = db.query(DoctorPatientAssignment).filter(
+            DoctorPatientAssignment.patient_id == current_user.id,
+            DoctorPatientAssignment.status == "active"
+        ).first()
+        if not assignment:
+            raise HTTPException(status_code=400, detail="You do not currently have an active assigned doctor.")
+        target_doctor_id = assignment.doctor_id
+    else:
+        if not data.patient_id:
+            raise HTTPException(status_code=400, detail="patient_id is required for doctors.")
+        target_patient_id = data.patient_id
+        verify_patient_doctor_access(current_user, target_patient_id, db)
+        target_doctor_id = current_user.id
+
+    # Strictly assign sender_id on server to prevent impersonation
+    new_msg = ChatMessage(
+        patient_id=target_patient_id,
+        doctor_id=target_doctor_id,
+        sender_id=current_user.id,
+        message=msg_text,
+        is_read=False
+    )
+    db.add(new_msg)
+    db.commit()
+    db.refresh(new_msg)
+
+    # When patient sends message, trigger notification for assigned doctor
+    if current_user.role == "patient":
+        create_notification(
+            db=db,
+            patient_id=target_patient_id,
+            doctor_id=target_doctor_id,
+            patient_name=current_user.full_name,
+            notification_type="chat_message",
+            title=f"New Chat Message from {current_user.full_name}",
+            description=msg_text[:120],
+            target_url=f"#chat-{target_patient_id}"
+        )
+
+    return {
+        "id": new_msg.id,
+        "patient_id": new_msg.patient_id,
+        "doctor_id": new_msg.doctor_id,
+        "sender_id": new_msg.sender_id,
+        "sender_name": current_user.full_name,
+        "sender_role": current_user.role,
+        "is_self": True,
+        "message": new_msg.message,
+        "is_read": new_msg.is_read,
+        "created_at": new_msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+@app.patch("/api/chat/read")
+def mark_chat_read(
+    patient_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role == "patient":
+        target_patient_id = current_user.id
+    else:
+        if not patient_id:
+            raise HTTPException(status_code=400, detail="patient_id is required.")
+        target_patient_id = patient_id
+        verify_patient_doctor_access(current_user, target_patient_id, db)
+
+    # Mark incoming unread messages as read
+    updated_count = db.query(ChatMessage).filter(
+        ChatMessage.patient_id == target_patient_id,
+        ChatMessage.sender_id != current_user.id,
+        ChatMessage.is_read == False
+    ).update({ChatMessage.is_read: True}, synchronize_session=False)
+
+    db.commit()
+    return {"message": "Chat messages marked as read.", "updated_count": updated_count}
+
+@app.get("/api/chat/unread")
+def get_unread_chat_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role == "patient":
+        count = db.query(ChatMessage).filter(
+            ChatMessage.patient_id == current_user.id,
+            ChatMessage.sender_id != current_user.id,
+            ChatMessage.is_read == False
+        ).count()
+    else:
+        count = db.query(ChatMessage).filter(
+            ChatMessage.doctor_id == current_user.id,
+            ChatMessage.sender_id != current_user.id,
+            ChatMessage.is_read == False
+        ).count()
+    return {"unread_chat_count": count}
+
+# =============================================================================
+# CONSULTATION FOLLOW-UP REQUEST & PATIENT STATUS
+# =============================================================================
+
+@app.post("/api/consultation/request")
+def request_consultation(
+    data: ConsultationRequestSchema,
+    current_user: User = Depends(get_patient_user),
+    db: Session = Depends(get_db)
+):
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == current_user.id,
+        DoctorPatientAssignment.status == "active"
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=400, detail="You do not have an active assigned doctor to request consultation from.")
+
+    create_notification(
+        db=db,
+        patient_id=current_user.id,
+        doctor_id=assignment.doctor_id,
+        patient_name=current_user.full_name,
+        notification_type="consultation_request",
+        title=f"Consultation Request: {current_user.full_name}",
+        description=data.notes.strip() if data.notes else "Patient requested a medical consultation.",
+        target_url=f"#patient-{current_user.id}"
+    )
+
+    return {"message": "Consultation request sent to your assigned doctor successfully."}
+
+@app.get("/api/patient/dashboard-status")
+def get_patient_dashboard_status(
+    current_user: User = Depends(get_patient_user),
+    db: Session = Depends(get_db)
+):
+    assignment = db.query(DoctorPatientAssignment).filter(
+        DoctorPatientAssignment.patient_id == current_user.id,
+        DoctorPatientAssignment.status == "active"
+    ).first()
+
+    doctor_info = None
+    if assignment:
+        doc = db.query(User).filter(User.id == assignment.doctor_id).first()
+        if doc:
+            doctor_info = {
+                "id": doc.id,
+                "doctor_code": f"DOC-{doc.id:04d}",
+                "full_name": doc.full_name,
+                "email": doc.email
+            }
+
+    unread_chat = db.query(ChatMessage).filter(
+        ChatMessage.patient_id == current_user.id,
+        ChatMessage.sender_id != current_user.id,
+        ChatMessage.is_read == False
+    ).count()
+
+    analyses_count = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == current_user.id).count()
+    latest_analysis = db.query(AnalysisRecord).filter(AnalysisRecord.user_id == current_user.id).order_by(AnalysisRecord.created_at.desc()).first()
+
+    return {
+        "has_assigned_doctor": assignment is not None,
+        "assignment_status": assignment.status if assignment else "unassigned",
+        "doctor": doctor_info,
+        "unread_chat_count": unread_chat,
+        "analyses_count": analyses_count,
+        "latest_analysis": {
+            "id": latest_analysis.id,
+            "created_at": latest_analysis.created_at.strftime("%Y-%m-%d %H:%M"),
+            "voice_label": latest_analysis.voice_label,
+            "voice_score": latest_analysis.voice_score,
+            "tremor_label": latest_analysis.tremor_label,
+            "tremor_score": latest_analysis.tremor_score,
+            "alcohol_risk": latest_analysis.alcohol_risk,
+            "alert_triggered": latest_analysis.alert_triggered
+        } if latest_analysis else None
+    }
 
 @app.get("/api/settings")
 def get_settings():
     return get_alert_settings()
+
 
 FRONTEND_DIR = BASE_DIR / "frontend"
 if FRONTEND_DIR.exists():

@@ -1,12 +1,23 @@
 /* =============================================================================
    Parkinson's Multi-Modal ML Dashboard — Client Application Logic (app.js)
+   Integrated Voice, Alcohol, Kinematic Tremor, One-to-One Patient-Doctor Assignment,
+   Private Consultation Chat, and Doctor Notification System.
    ============================================================================= */
 
 document.addEventListener('DOMContentLoaded', () => {
 
-    // Global State
+    // =========================================================================
+    // GLOBAL APPLICATION STATE
+    // =========================================================================
     let authToken = localStorage.getItem('parkinsons_jwt_token') || null;
     let currentUser = null;
+    let assignedDoctor = null;
+    let assignedPatientsList = [];
+    let activeChatPatientId = null;
+    let chatPollingTimer = null;
+    let globalPollingTimer = null;
+
+    // Audio & Recording State
     let mediaRecorder = null;
     let audioChunks = [];
     let recordedAudioBlob = null;
@@ -19,14 +30,24 @@ document.addEventListener('DOMContentLoaded', () => {
     let useTremorSegmentMode = true;
     let selectedTremorUploadFile = null;
 
-    // DOM Elements - Auth & Nav
+    // =========================================================================
+    // DOM ELEMENTS REFERENCES
+    // =========================================================================
+    // Auth & Navigation
     const authScreen = document.getElementById('auth-screen');
     const dashboardScreen = document.getElementById('dashboard-screen');
     const navUserControls = document.getElementById('nav-user-controls');
     const userDisplayName = document.getElementById('user-display-name');
     const userRoleTag = document.getElementById('user-role-tag');
     const logoutBtn = document.getElementById('logout-btn');
-    
+
+    // Nav Actions
+    const navChatBtn = document.getElementById('nav-chat-btn');
+    const navChatUnreadBadge = document.getElementById('nav-chat-unread-badge');
+    const doctorNotifBell = document.getElementById('doctor-notif-bell');
+    const notifBtn = document.getElementById('notif-btn');
+    const notifCountBadge = document.getElementById('notif-count');
+
     // Auth Forms
     const loginForm = document.getElementById('login-form');
     const registerForm = document.getElementById('register-form');
@@ -36,27 +57,55 @@ document.addEventListener('DOMContentLoaded', () => {
     const demoDoctorBtn = document.getElementById('demo-doctor-btn');
     const demoPatientBtn = document.getElementById('demo-patient-btn');
 
-    // Doctor Notification Elements
-    const doctorNotifBell = document.getElementById('doctor-notif-bell');
+    // Patient Dashboard Elements
+    const patientDoctorBanner = document.getElementById('patient-doctor-banner');
+    const patDoctorName = document.getElementById('pat-doctor-name');
+    const patDoctorEmail = document.getElementById('pat-doctor-email');
+    const patAssignedDate = document.getElementById('pat-assigned-date');
+    const patDoctorStatusBadge = document.getElementById('pat-doctor-status-badge');
+    const btnPatientOpenChat = document.getElementById('btn-patient-open-chat');
+    const patChatUnreadBadge = document.getElementById('pat-chat-unread-badge');
+    const btnRequestConsultation = document.getElementById('btn-request-consultation');
+    const btnChangeDoctor = document.getElementById('btn-change-doctor');
+
+    // Doctor Navigation & Assigned Patients Section
+    const doctorNavBar = document.getElementById('doctor-nav-bar');
+    const tabDocPatients = document.getElementById('tab-doc-patients');
+    const tabDocPipeline = document.getElementById('tab-doc-pipeline');
+    const tabDocAlerts = document.getElementById('tab-doc-alerts');
+    const tabDocChat = document.getElementById('tab-doc-chat');
+    const docPatientsCountBadge = document.getElementById('doc-patients-count-badge');
+    const docAlertsCountBadge = document.getElementById('doc-alerts-count-badge');
+    const docChatCountBadge = document.getElementById('doc-chat-count-badge');
+
+    const doctorPatientsSection = document.getElementById('doctor-patients-section');
+    const docStatTotalPatients = document.getElementById('doc-stat-total-patients');
+    const docStatAlerts = document.getElementById('doc-stat-alerts');
+    const docStatUnreadMessages = document.getElementById('doc-stat-unread-messages');
+    const pendingRequestsCard = document.getElementById('pending-requests-card');
+    const pendingRequestsList = document.getElementById('pending-requests-list');
+    const assignedPatientsTbody = document.getElementById('assigned-patients-tbody');
+    const btnRefreshPatients = document.getElementById('btn-refresh-patients');
+    const btnOpenAssignModal = document.getElementById('btn-open-assign-modal');
+
+    // Screening Pipeline & Alerts Containers
+    const screeningPipelineContainer = document.getElementById('screening-pipeline-container');
     const doctorNotifsSection = document.getElementById('doctor-notifications-section');
-    const notifCountBadge = document.getElementById('notif-count');
     const unreadCountBadge = document.getElementById('unread-count-badge');
     const notificationsContainer = document.getElementById('notifications-container');
     const refreshNotifsBtn = document.getElementById('refresh-notifs-btn');
 
-    // Audio Subtabs & Inputs
+    // Audio Subtabs & Live Recording
     const subtabRecord = document.getElementById('subtab-record');
     const subtabUpload = document.getElementById('subtab-upload');
     const modeRecordPanel = document.getElementById('mode-record-panel');
     const modeUploadPanel = document.getElementById('mode-upload-panel');
-    
     const btnStartRecord = document.getElementById('btn-start-record');
     const btnStopRecord = document.getElementById('btn-stop-record');
     const visualizerBox = document.getElementById('visualizer-box');
     const recordTimer = document.getElementById('record-timer');
     const audioPreviewBox = document.getElementById('audio-preview-box');
     const recordedAudioElement = document.getElementById('recorded-audio-element');
-
     const dropzone = document.getElementById('dropzone');
     const audioFileInput = document.getElementById('audio-file-input');
     const selectedFileName = document.getElementById('selected-file-name');
@@ -74,11 +123,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const tremorFileInput = document.getElementById('tremor-file-input');
     const selectedTremorFileName = document.getElementById('selected-tremor-file-name');
 
-    // Results Elements
+    // Results Display Elements
     const resultsPlaceholder = document.getElementById('results-placeholder');
     const resultsContent = document.getElementById('results-content');
     const highRiskBanner = document.getElementById('high-risk-banner');
-    
+
     // Model 1: Voice
     const voiceClassBadge = document.getElementById('voice-class-badge');
     const voiceGaugeFill = document.getElementById('voice-gauge-fill');
@@ -105,12 +154,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const tremorSourceVal = document.getElementById('tremor-source-val');
     const tremorCvVal = document.getElementById('tremor-cv-val');
 
-    // Tri-Modal Synthesis Elements
+    // Tri-Modal Synthesis Statuses
     const synthVoiceStatus = document.getElementById('synth-voice-status');
     const synthAlcoholStatus = document.getElementById('synth-alcohol-status');
     const synthTremorStatus = document.getElementById('synth-tremor-status');
 
-    // History & Modal
+    // History & Modals
     const historyTbody = document.getElementById('history-tbody');
     const btnRefreshHistory = document.getElementById('btn-refresh-history');
     const detailModal = document.getElementById('detail-modal');
@@ -118,8 +167,56 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalBodyContent = document.getElementById('modal-body-content');
     const loadingSpinner = document.getElementById('loading-spinner');
 
+    // Chat Modal Elements
+    const chatModal = document.getElementById('chat-modal');
+    const chatModalCloseBtn = document.getElementById('chat-modal-close-btn');
+    const chatCounterpartName = document.getElementById('chat-counterpart-name');
+    const chatCounterpartRole = document.getElementById('chat-counterpart-role');
+    const chatSidebar = document.getElementById('chat-sidebar');
+    const chatPatientList = document.getElementById('chat-patient-list');
+    const chatMessagesContainer = document.getElementById('chat-messages-container');
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+
+    // Patient Detail Modal (Doctor View)
+    const patientDetailModal = document.getElementById('patient-detail-modal');
+    const patModalTitle = document.getElementById('pat-modal-title');
+    const patModalSub = document.getElementById('pat-modal-sub');
+    const patModalCloseBtn = document.getElementById('pat-modal-close-btn');
+    const patModalTbody = document.getElementById('pat-modal-tbody');
+    const btnModalOpenPatientChat = document.getElementById('btn-modal-open-patient-chat');
+    let currentSelectedPatientIdForModal = null;
+
+    // Doctor Select Modal (Patient View)
+    const doctorSelectModal = document.getElementById('doctor-select-modal');
+    const docSelectCloseBtn = document.getElementById('doc-select-close-btn');
+    const doctorSelectList = document.getElementById('doctor-select-list');
+
+    // Consultation Modal (Patient View)
+    const consultationModal = document.getElementById('consultation-modal');
+    const consultationCloseBtn = document.getElementById('consultation-close-btn');
+    const consultationForm = document.getElementById('consultation-form');
+    const consultationNotes = document.getElementById('consultation-notes');
+
+    // Direct Assign Modal (Doctor View)
+    const directAssignModal = document.getElementById('direct-assign-modal');
+    const assignCloseBtn = document.getElementById('assign-close-btn');
+    const directAssignForm = document.getElementById('direct-assign-form');
+    const assignPatientEmail = document.getElementById('assign-patient-email');
+
+    // Helper: Escape HTML to prevent XSS
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     // =========================================================================
-    // 1. INITIALIZATION & SESSION CHECK
+    // 1. INITIALIZATION & SESSION MANAGEMENT
     // =========================================================================
 
     async function initApp() {
@@ -143,7 +240,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function showAuthScreen() {
         authToken = null;
         currentUser = null;
+        assignedDoctor = null;
+        assignedPatientsList = [];
+        activeChatPatientId = null;
+        clearInterval(chatPollingTimer);
+        clearInterval(globalPollingTimer);
         localStorage.removeItem('parkinsons_jwt_token');
+
         authScreen.style.display = 'flex';
         dashboardScreen.style.display = 'none';
         navUserControls.style.display = 'none';
@@ -159,16 +262,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (currentUser.role === 'doctor') {
             doctorNotifBell.style.display = 'block';
-            doctorNotifsSection.style.display = 'block';
+            doctorNavBar.style.display = 'flex';
+            patientDoctorBanner.style.display = 'none';
+            switchDoctorTab('patients');
             loadDoctorNotifications();
+            loadAssignedPatients();
+            loadPendingAssignments();
         } else {
             doctorNotifBell.style.display = 'none';
+            doctorNavBar.style.display = 'none';
+            doctorPatientsSection.style.display = 'none';
             doctorNotifsSection.style.display = 'none';
+            screeningPipelineContainer.style.display = 'block';
+            loadPatientDoctorStatus();
         }
 
         loadHistory();
-        
-        // Animate dashboard entrance
+        loadUnreadChatCount();
+        startGlobalPolling();
+
+        // Animate entrance
         dashboardScreen.style.opacity = '0';
         dashboardScreen.style.transform = 'translateY(20px)';
         setTimeout(() => {
@@ -176,6 +289,20 @@ document.addEventListener('DOMContentLoaded', () => {
             dashboardScreen.style.opacity = '1';
             dashboardScreen.style.transform = 'translateY(0)';
         }, 50);
+    }
+
+    function startGlobalPolling() {
+        clearInterval(globalPollingTimer);
+        globalPollingTimer = setInterval(() => {
+            if (!authToken) return;
+            loadUnreadChatCount();
+            if (currentUser && currentUser.role === 'doctor') {
+                loadDoctorNotifications();
+                loadPendingAssignments();
+            } else if (currentUser && currentUser.role === 'patient') {
+                loadPatientDoctorStatus();
+            }
+        }, 8000);
     }
 
     // =========================================================================
@@ -274,7 +401,879 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // =========================================================================
-    // 3. AUDIO SUBTABS & LIVE WEB RECORDER
+    // 3. DOCTOR NAVIGATION & ASSIGNED PATIENT MANAGEMENT
+    // =========================================================================
+
+    function switchDoctorTab(tab) {
+        tabDocPatients.classList.toggle('active', tab === 'patients');
+        tabDocPipeline.classList.toggle('active', tab === 'pipeline');
+        tabDocAlerts.classList.toggle('active', tab === 'alerts');
+        tabDocChat.classList.toggle('active', tab === 'chat');
+
+        if (tab === 'patients') {
+            doctorPatientsSection.style.display = 'block';
+            screeningPipelineContainer.style.display = 'none';
+            doctorNotifsSection.style.display = 'none';
+            loadAssignedPatients();
+            loadPendingAssignments();
+        } else if (tab === 'pipeline') {
+            doctorPatientsSection.style.display = 'none';
+            screeningPipelineContainer.style.display = 'block';
+            doctorNotifsSection.style.display = 'none';
+        } else if (tab === 'alerts') {
+            doctorPatientsSection.style.display = 'none';
+            screeningPipelineContainer.style.display = 'none';
+            doctorNotifsSection.style.display = 'block';
+            loadDoctorNotifications();
+        } else if (tab === 'chat') {
+            openChatModal(assignedPatientsList.length > 0 ? assignedPatientsList[0].id : null);
+        }
+    }
+
+    if (tabDocPatients) tabDocPatients.addEventListener('click', () => switchDoctorTab('patients'));
+    if (tabDocPipeline) tabDocPipeline.addEventListener('click', () => switchDoctorTab('pipeline'));
+    if (tabDocAlerts) tabDocAlerts.addEventListener('click', () => switchDoctorTab('alerts'));
+    if (tabDocChat) tabDocChat.addEventListener('click', () => switchDoctorTab('chat'));
+
+    if (notifBtn) {
+        notifBtn.addEventListener('click', () => {
+            if (currentUser && currentUser.role === 'doctor') {
+                switchDoctorTab('alerts');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        });
+    }
+
+    if (navChatBtn) {
+        navChatBtn.addEventListener('click', () => {
+            openChatModal();
+        });
+    }
+
+    async function loadAssignedPatients() {
+        try {
+            const res = await fetch('/api/patients', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+            assignedPatientsList = await res.json();
+
+            docStatTotalPatients.textContent = assignedPatientsList.length;
+            docPatientsCountBadge.textContent = assignedPatientsList.length;
+
+            if (assignedPatientsList.length === 0) {
+                assignedPatientsTbody.innerHTML = `<tr><td colspan="9" class="text-center" style="padding:2rem;">No patients assigned to your clinical panel yet. Use "Direct Assign Patient" or accept pending assignment requests.</td></tr>`;
+                return;
+            }
+
+            assignedPatientsTbody.innerHTML = assignedPatientsList.map(p => `
+                <tr>
+                    <td><strong>${p.patient_code}</strong></td>
+                    <td>
+                        <div><strong>${escapeHtml(p.full_name)}</strong></div>
+                        <div style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(p.email)}</div>
+                    </td>
+                    <td>${p.assigned_date}</td>
+                    <td><strong>${p.total_analyses}</strong> tests</td>
+                    <td>${p.latest_prediction ? (p.latest_prediction.includes("Parkinson") ? '<span class="badge badge-positive">Parkinson\'s</span>' : '<span class="badge badge-negative">Healthy</span>') : '<span class="badge badge-grey">None</span>'}</td>
+                    <td>${p.latest_voice_score !== null ? `${p.latest_voice_score.toFixed(1)}%` : '—'}</td>
+                    <td>${p.latest_tremor_score !== null ? `${p.latest_tremor_score.toFixed(1)}%` : '—'}</td>
+                    <td><span class="badge ${p.latest_alcohol_risk === 'HIGH' ? 'badge-risk-high' : (p.latest_alcohol_risk === 'MEDIUM' ? 'badge-risk-med' : 'badge-risk-low')}">${p.latest_alcohol_risk}</span></td>
+                    <td>
+                        <div style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-primary btn-xs patient-chat-btn" data-id="${p.id}" data-name="${escapeHtml(p.full_name)}">
+                                💬 Chat ${p.unread_chat_count > 0 ? `<span class="tab-badge" style="background:var(--danger-color);">${p.unread_chat_count}</span>` : ''}
+                            </button>
+                            <button class="btn btn-secondary btn-xs patient-detail-btn" data-id="${p.id}">
+                                📋 Records
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            document.querySelectorAll('.patient-chat-btn').forEach(b => {
+                b.addEventListener('click', (e) => {
+                    const pid = parseInt(b.dataset.id);
+                    openChatModal(pid);
+                });
+            });
+
+            document.querySelectorAll('.patient-detail-btn').forEach(b => {
+                b.addEventListener('click', (e) => {
+                    const pid = parseInt(b.dataset.id);
+                    openPatientDetailModal(pid);
+                });
+            });
+
+        } catch (err) {
+            console.error("Failed to load assigned patients:", err);
+        }
+    }
+
+    if (btnRefreshPatients) btnRefreshPatients.addEventListener('click', loadAssignedPatients);
+
+    async function loadPendingAssignments() {
+        if (!currentUser || currentUser.role !== 'doctor') return;
+        try {
+            const res = await fetch('/api/assignment/pending', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+            const pending = await res.json();
+
+            if (pending.length === 0) {
+                pendingRequestsCard.style.display = 'none';
+                return;
+            }
+
+            pendingRequestsCard.style.display = 'block';
+            pendingRequestsList.innerHTML = pending.map(req => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:0.75rem 1rem; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.08);">
+                    <div>
+                        <strong>${escapeHtml(req.patient_name)}</strong> (${escapeHtml(req.patient_email)})
+                        <div style="font-size:0.75rem; color:var(--text-secondary);">Requested: ${req.requested_at}</div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-primary btn-xs accept-req-btn" data-id="${req.assignment_id}">Accept Patient</button>
+                        <button class="btn btn-outline btn-xs decline-req-btn" data-id="${req.assignment_id}">Decline</button>
+                    </div>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.accept-req-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const id = b.dataset.id;
+                    const res = await fetch(`/api/assignment/${id}/accept`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    if (res.ok) {
+                        loadPendingAssignments();
+                        loadAssignedPatients();
+                    }
+                });
+            });
+
+            document.querySelectorAll('.decline-req-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const id = b.dataset.id;
+                    const res = await fetch(`/api/assignment/${id}/decline`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    if (res.ok) {
+                        loadPendingAssignments();
+                    }
+                });
+            });
+
+        } catch (err) {
+            console.error("Failed to load pending assignments:", err);
+        }
+    }
+
+    async function openPatientDetailModal(patientId) {
+        currentSelectedPatientIdForModal = patientId;
+        patModalTbody.innerHTML = `<tr><td colspan="8" class="text-center">Loading patient clinical records...</td></tr>`;
+        patientDetailModal.style.display = 'flex';
+
+        try {
+            const res = await fetch(`/api/patients/${patientId}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) throw new Error("Could not load patient clinical details.");
+            const data = await res.json();
+
+            patModalTitle.textContent = `${data.full_name} (${data.patient_code})`;
+            patModalSub.textContent = `Email: ${data.email} | Total Analyses: ${data.total_analyses} | Status: ${data.assignment_status.toUpperCase()}`;
+
+            if (data.analyses.length === 0) {
+                patModalTbody.innerHTML = `<tr><td colspan="8" class="text-center">No assessments recorded for this patient yet.</td></tr>`;
+                return;
+            }
+
+            patModalTbody.innerHTML = data.analyses.map(a => `
+                <tr>
+                    <td>${a.created_at}</td>
+                    <td>${a.voice_label.includes("Parkinson") ? '<span class="badge badge-positive">Parkinson\'s</span>' : '<span class="badge badge-negative">Healthy</span>'}</td>
+                    <td><strong>${a.voice_score.toFixed(1)}%</strong></td>
+                    <td>${a.tremor_label ? (a.tremor_label.includes("Parkinson") ? '<span class="badge badge-positive">Tremor Pattern</span>' : '<span class="badge badge-negative">Healthy</span>') : '—'}</td>
+                    <td><strong>${a.tremor_score !== null && a.tremor_score !== undefined ? `${a.tremor_score.toFixed(1)}%` : '—'}</strong></td>
+                    <td><span class="badge ${a.alcohol_risk === 'HIGH' ? 'badge-risk-high' : (a.alcohol_risk === 'MEDIUM' ? 'badge-risk-med' : 'badge-risk-low')}">${a.alcohol_risk}</span></td>
+                    <td>${a.alert_triggered ? '🔔 HIGH' : '—'}</td>
+                    <td><button class="btn btn-secondary btn-xs pat-analysis-detail-btn" data-id="${a.id}">Full Report</button></td>
+                </tr>
+            `).join('');
+
+            document.querySelectorAll('.pat-analysis-detail-btn').forEach(b => {
+                b.addEventListener('click', (e) => {
+                    openAnalysisDetailModal(b.dataset.id);
+                });
+            });
+
+        } catch (err) {
+            patModalTbody.innerHTML = `<tr><td colspan="8" class="text-center" style="color:var(--danger-color);">${err.message}</td></tr>`;
+        }
+    }
+
+    if (patModalCloseBtn) {
+        patModalCloseBtn.addEventListener('click', () => {
+            patientDetailModal.style.display = 'none';
+        });
+    }
+
+    if (btnModalOpenPatientChat) {
+        btnModalOpenPatientChat.addEventListener('click', () => {
+            patientDetailModal.style.display = 'none';
+            if (currentSelectedPatientIdForModal) {
+                openChatModal(currentSelectedPatientIdForModal);
+            }
+        });
+    }
+
+    // Direct Assign Modal
+    if (btnOpenAssignModal) {
+        btnOpenAssignModal.addEventListener('click', () => {
+            directAssignModal.style.display = 'flex';
+        });
+    }
+
+    if (assignCloseBtn) {
+        assignCloseBtn.addEventListener('click', () => {
+            directAssignModal.style.display = 'none';
+        });
+    }
+
+    if (directAssignForm) {
+        directAssignForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = assignPatientEmail.value.trim();
+            if (!email) return;
+
+            try {
+                const res = await fetch('/api/assignment/assign', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ patient_email: email })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Assignment failed");
+
+                alert(data.message || "Patient assigned successfully.");
+                directAssignModal.style.display = 'none';
+                assignPatientEmail.value = '';
+                loadAssignedPatients();
+
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            }
+        });
+    }
+
+    // =========================================================================
+    // 4. PATIENT DASHBOARD: DOCTOR PROFILE, CONSULTATION & SELECT MODAL
+    // =========================================================================
+
+    async function loadPatientDoctorStatus() {
+        if (!currentUser || currentUser.role !== 'patient') return;
+
+        try {
+            const res = await fetch('/api/assignment/my-doctor', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            assignedDoctor = data;
+
+            patientDoctorBanner.style.display = 'flex';
+
+            if (data.has_doctor && data.doctor) {
+                patDoctorName.textContent = data.doctor.full_name;
+                patDoctorEmail.textContent = data.doctor.email;
+                patAssignedDate.textContent = `Assigned Primary Physician (${data.doctor.doctor_code || 'Verified'})`;
+                patDoctorStatusBadge.textContent = "Active Care";
+                patDoctorStatusBadge.className = "badge badge-success";
+                btnPatientOpenChat.style.display = 'inline-flex';
+                btnRequestConsultation.style.display = 'inline-flex';
+                btnChangeDoctor.textContent = "🔄 Select / Change Doctor";
+
+                if (data.unread_chat_count > 0) {
+                    patChatUnreadBadge.textContent = data.unread_chat_count;
+                    patChatUnreadBadge.style.display = 'inline-block';
+                } else {
+                    patChatUnreadBadge.style.display = 'none';
+                }
+            } else if (data.status === 'pending' && data.doctor) {
+                patDoctorName.textContent = data.doctor.full_name;
+                patDoctorEmail.textContent = data.doctor.email;
+                patAssignedDate.textContent = "Assignment Request Pending Doctor Confirmation";
+                patDoctorStatusBadge.textContent = "Pending Approval";
+                patDoctorStatusBadge.className = "badge badge-warning";
+                btnPatientOpenChat.style.display = 'none';
+                btnRequestConsultation.style.display = 'none';
+                btnChangeDoctor.textContent = "🔄 Select Another Doctor";
+            } else {
+                patDoctorName.textContent = "No Assigned Primary Care Neurologist";
+                patDoctorEmail.textContent = "Connect to an authorized clinician to enable secure medical chat & reports review";
+                patAssignedDate.textContent = "Direct care link inactive";
+                patDoctorStatusBadge.textContent = "Not Linked";
+                patDoctorStatusBadge.className = "badge badge-alert";
+                btnPatientOpenChat.style.display = 'none';
+                btnRequestConsultation.style.display = 'none';
+                btnChangeDoctor.textContent = "🏥 Select & Link Doctor";
+            }
+        } catch (err) {
+            console.error("Failed to load patient doctor status:", err);
+        }
+    }
+
+    if (btnPatientOpenChat) {
+        btnPatientOpenChat.addEventListener('click', () => {
+            openChatModal(currentUser.id);
+        });
+    }
+
+    if (btnChangeDoctor) {
+        btnChangeDoctor.addEventListener('click', () => {
+            openDoctorSelectModal();
+        });
+    }
+
+    async function openDoctorSelectModal() {
+        doctorSelectModal.style.display = 'flex';
+        doctorSelectList.innerHTML = `<div class="empty-state">Loading registered neurologists...</div>`;
+
+        try {
+            const res = await fetch('/api/doctors', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) throw new Error("Could not load doctors directory.");
+            const doctors = await res.json();
+
+            if (doctors.length === 0) {
+                doctorSelectList.innerHTML = `<div class="empty-state">No registered doctors found in directory.</div>`;
+                return;
+            }
+
+            doctorSelectList.innerHTML = doctors.map(doc => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:0.85rem 1rem; border-radius:var(--radius-md); border:1px solid var(--border-color);">
+                    <div>
+                        <strong style="color:var(--text-primary); font-size:0.95rem;">${escapeHtml(doc.full_name)}</strong>
+                        <div style="font-size:0.78rem; color:var(--text-secondary);">${doc.doctor_code} • ${escapeHtml(doc.email)}</div>
+                    </div>
+                    <button class="btn btn-primary btn-xs select-doc-btn" data-id="${doc.id}" data-name="${escapeHtml(doc.full_name)}">
+                        Link as My Doctor
+                    </button>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.select-doc-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const docId = parseInt(b.dataset.id);
+                    const docName = b.dataset.name;
+                    await linkDoctorToPatient(docId, docName);
+                });
+            });
+
+        } catch (err) {
+            doctorSelectList.innerHTML = `<div class="empty-state" style="color:var(--danger-color);">${err.message}</div>`;
+        }
+    }
+
+    async function linkDoctorToPatient(docId, docName) {
+        try {
+            const res = await fetch('/api/assignment/request', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ doctor_id: docId, auto_accept: true })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Doctor linking failed");
+
+            alert(data.message || `Successfully linked to Dr. ${docName}!`);
+            doctorSelectModal.style.display = 'none';
+            loadPatientDoctorStatus();
+
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    }
+
+    if (docSelectCloseBtn) {
+        docSelectCloseBtn.addEventListener('click', () => {
+            doctorSelectModal.style.display = 'none';
+        });
+    }
+
+    // Consultation Request Modal
+    if (btnRequestConsultation) {
+        btnRequestConsultation.addEventListener('click', () => {
+            consultationModal.style.display = 'flex';
+        });
+    }
+
+    if (consultationCloseBtn) {
+        consultationCloseBtn.addEventListener('click', () => {
+            consultationModal.style.display = 'none';
+        });
+    }
+
+    if (consultationForm) {
+        consultationForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const notes = consultationNotes.value.trim();
+
+            try {
+                const res = await fetch('/api/consultation/request', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ notes })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Consultation request failed");
+
+                alert("Medical follow-up consultation request sent to your assigned doctor!");
+                consultationModal.style.display = 'none';
+                consultationNotes.value = '';
+
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            }
+        });
+    }
+
+    // =========================================================================
+    // 5. PRIVATE ONE-TO-ONE CHAT ENGINE
+    // =========================================================================
+
+    async function openChatModal(patientId = null) {
+        chatModal.style.display = 'flex';
+
+        if (currentUser.role === 'doctor') {
+            chatSidebar.style.display = 'flex';
+            if (!patientId && assignedPatientsList.length > 0) {
+                patientId = assignedPatientsList[0].id;
+            }
+            activeChatPatientId = patientId;
+            renderChatPatientSidebar(activeChatPatientId);
+
+            if (activeChatPatientId) {
+                const pat = assignedPatientsList.find(p => p.id === activeChatPatientId);
+                chatCounterpartName.textContent = pat ? `Patient: ${pat.full_name} (${pat.patient_code})` : "Patient Consultation";
+                chatCounterpartRole.textContent = "Assigned Clinical Patient";
+            } else {
+                chatCounterpartName.textContent = "No Patient Selected";
+                chatCounterpartRole.textContent = "Assign a patient to begin consultation";
+            }
+        } else {
+            chatSidebar.style.display = 'none';
+            activeChatPatientId = currentUser.id;
+            chatCounterpartName.textContent = assignedDoctor && assignedDoctor.doctor ? assignedDoctor.doctor.full_name : "Assigned Physician";
+            chatCounterpartRole.textContent = "Primary Clinical Neurologist";
+        }
+
+        if (activeChatPatientId) {
+            await loadChatMessages(activeChatPatientId, false);
+        } else {
+            chatMessagesContainer.innerHTML = `<div class="empty-state">No assigned patient selected for consultation.</div>`;
+        }
+
+        // Start periodic chat refresh (every 3 seconds)
+        clearInterval(chatPollingTimer);
+        chatPollingTimer = setInterval(() => {
+            if (chatModal.style.display === 'flex' && activeChatPatientId) {
+                loadChatMessages(activeChatPatientId, true);
+            }
+        }, 3000);
+    }
+
+    function renderChatPatientSidebar(selectedId) {
+        if (!chatPatientList) return;
+        if (assignedPatientsList.length === 0) {
+            chatPatientList.innerHTML = `<div class="empty-state" style="font-size:0.8rem;">No assigned patients.</div>`;
+            return;
+        }
+
+        chatPatientList.innerHTML = assignedPatientsList.map(p => `
+            <div class="chat-patient-item ${p.id === selectedId ? 'active' : ''}" data-id="${p.id}">
+                <div>
+                    <div style="font-weight:600; font-size:0.88rem; color:var(--text-primary);">${escapeHtml(p.full_name)}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">${p.patient_code}</div>
+                </div>
+                ${p.unread_chat_count > 0 ? `<span class="tab-badge" style="background:var(--danger-color);">${p.unread_chat_count}</span>` : ''}
+            </div>
+        `).join('');
+
+        document.querySelectorAll('.chat-patient-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const pid = parseInt(item.dataset.id);
+                activeChatPatientId = pid;
+                renderChatPatientSidebar(pid);
+                const pat = assignedPatientsList.find(p => p.id === pid);
+                if (pat) {
+                    chatCounterpartName.textContent = `Patient: ${pat.full_name} (${pat.patient_code})`;
+                    chatCounterpartRole.textContent = "Assigned Clinical Patient";
+                }
+                loadChatMessages(pid, false);
+            });
+        });
+    }
+
+    async function loadChatMessages(patientId, silent = false) {
+        if (!patientId || !authToken) return;
+
+        try {
+            const res = await fetch(`/api/chat/messages?patient_id=${patientId}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+
+            if (data.messages.length === 0) {
+                chatMessagesContainer.innerHTML = `<div class="empty-state">No messages exchanged yet. Send a message to start this consultation.</div>`;
+                return;
+            }
+
+            const wasScrolledToBottom = (chatMessagesContainer.scrollHeight - chatMessagesContainer.clientHeight) <= (chatMessagesContainer.scrollTop + 60);
+
+            chatMessagesContainer.innerHTML = data.messages.map(m => `
+                <div class="chat-bubble-row ${m.is_self ? 'outgoing' : 'incoming'}">
+                    <span class="chat-sender-name">${m.is_self ? 'You' : escapeHtml(m.sender_name)} • ${m.sender_role.toUpperCase()}</span>
+                    <div class="chat-bubble">
+                        ${escapeHtml(m.message)}
+                        <div class="chat-bubble-meta">
+                            <span>${m.created_at.split(' ')[1] || m.created_at}</span>
+                            ${m.is_self ? `<span>${m.is_read ? '✓✓' : '✓'}</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            if (wasScrolledToBottom || !silent) {
+                chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+            }
+
+            // Mark conversation as read
+            await fetch(`/api/chat/read?patient_id=${patientId}`, {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+
+            loadUnreadChatCount();
+
+        } catch (err) {
+            console.error("Failed to load chat messages:", err);
+        }
+    }
+
+    if (chatForm) {
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const text = chatInput.value.trim();
+            if (!text) return;
+            if (!activeChatPatientId) {
+                alert("No active patient selected for consultation.");
+                return;
+            }
+
+            chatInput.value = '';
+
+            try {
+                const body = {
+                    message: text,
+                    patient_id: currentUser.role === 'doctor' ? activeChatPatientId : undefined
+                };
+
+                const res = await fetch('/api/chat/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                if (!res.ok) {
+                    const errData = await res.json();
+                    throw new Error(errData.detail || "Failed to send message");
+                }
+
+                await loadChatMessages(activeChatPatientId, false);
+                if (currentUser.role === 'doctor') {
+                    loadAssignedPatients();
+                }
+
+            } catch (err) {
+                alert(`Chat Error: ${err.message}`);
+            }
+        });
+    }
+
+    if (chatModalCloseBtn) {
+        chatModalCloseBtn.addEventListener('click', () => {
+            chatModal.style.display = 'none';
+            clearInterval(chatPollingTimer);
+            loadUnreadChatCount();
+        });
+    }
+
+    async function loadUnreadChatCount() {
+        if (!authToken) return;
+        try {
+            const res = await fetch('/api/chat/unread', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            const count = data.unread_chat_count;
+
+            if (navChatUnreadBadge) {
+                if (count > 0) {
+                    navChatUnreadBadge.textContent = count;
+                    navChatUnreadBadge.style.display = 'inline-block';
+                } else {
+                    navChatUnreadBadge.style.display = 'none';
+                }
+            }
+
+            if (docChatCountBadge) {
+                if (count > 0) {
+                    docChatCountBadge.textContent = count;
+                    docChatCountBadge.style.display = 'inline-block';
+                } else {
+                    docChatCountBadge.style.display = 'none';
+                }
+            }
+
+            if (docStatUnreadMessages) {
+                docStatUnreadMessages.textContent = count;
+            }
+
+        } catch (err) {
+            console.error("Failed to load unread chat count:", err);
+        }
+    }
+
+    // =========================================================================
+    // 6. DOCTOR NOTIFICATIONS & CLINICAL ALERT CENTER
+    // =========================================================================
+
+    async function loadDoctorNotifications() {
+        if (!currentUser || currentUser.role !== 'doctor') return;
+        try {
+            const res = await fetch('/api/notifications', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+
+            const data = await res.json();
+            notifCountBadge.textContent = data.unread_count;
+            unreadCountBadge.textContent = `${data.unread_count} New`;
+            docAlertsCountBadge.textContent = `${data.unread_count} New`;
+            docStatAlerts.textContent = data.unread_count;
+
+            if (data.notifications.length === 0) {
+                notificationsContainer.innerHTML = `<div class="empty-state">No clinical risk alerts or consultation notices generated yet.</div>`;
+                return;
+            }
+
+            notificationsContainer.innerHTML = data.notifications.map(n => {
+                const typeClass = `notif-type-${n.notification_type || 'clinical_alert'}`;
+                const typeLabel = (n.notification_type || 'clinical_alert').replace('_', ' ');
+                return `
+                <div class="notif-card ${n.is_read ? 'read' : ''}">
+                    <div>
+                        <div class="notif-title">
+                            <span class="notif-type-tag ${typeClass}">${typeLabel}</span>
+                            <strong>${escapeHtml(n.title)}</strong>
+                        </div>
+                        <div class="notif-meta">
+                            ${escapeHtml(n.description)} | Generated: ${n.created_at}
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        ${!n.is_read ? `<button class="btn btn-secondary btn-xs mark-read-btn" data-id="${n.id}">Mark Read</button>` : ''}
+                        ${n.notification_type === 'chat_message' ? 
+                            `<button class="btn btn-primary btn-xs notif-chat-action-btn" data-patient="${n.patient_id}" data-notif="${n.id}">💬 Chat</button>` :
+                          (n.analysis_id && n.analysis_id > 0 ? 
+                            `<button class="btn btn-primary btn-xs notif-analysis-action-btn" data-id="${n.analysis_id}" data-notif="${n.id}">View Analysis</button>` :
+                            `<button class="btn btn-primary btn-xs notif-patient-action-btn" data-patient="${n.patient_id}" data-notif="${n.id}">Patient File</button>`)
+                        }
+                    </div>
+                </div>
+            `}).join('');
+
+            // Notification Actions
+            document.querySelectorAll('.mark-read-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const id = b.dataset.id;
+                    await fetch(`/api/notifications/${id}/read`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    loadDoctorNotifications();
+                });
+            });
+
+            document.querySelectorAll('.notif-chat-action-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const pid = parseInt(b.dataset.patient);
+                    const notifId = b.dataset.notif;
+                    await fetch(`/api/notifications/${notifId}/read`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    loadDoctorNotifications();
+                    openChatModal(pid);
+                });
+            });
+
+            document.querySelectorAll('.notif-analysis-action-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const aid = b.dataset.id;
+                    const notifId = b.dataset.notif;
+                    await fetch(`/api/notifications/${notifId}/read`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    loadDoctorNotifications();
+                    openAnalysisDetailModal(aid);
+                });
+            });
+
+            document.querySelectorAll('.notif-patient-action-btn').forEach(b => {
+                b.addEventListener('click', async (e) => {
+                    const pid = parseInt(b.dataset.patient);
+                    const notifId = b.dataset.notif;
+                    await fetch(`/api/notifications/${notifId}/read`, {
+                        method: 'PATCH',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    loadDoctorNotifications();
+                    openPatientDetailModal(pid);
+                });
+            });
+
+        } catch (err) {
+            console.error("Failed to load doctor notifications:", err);
+        }
+    }
+
+    if (refreshNotifsBtn) refreshNotifsBtn.addEventListener('click', loadDoctorNotifications);
+
+    // =========================================================================
+    // 7. PREVIOUS ANALYSES HISTORY TABLE
+    // =========================================================================
+
+    async function loadHistory() {
+        try {
+            const res = await fetch('/api/analysis/history', {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) return;
+
+            const records = await res.json();
+
+            if (records.length === 0) {
+                historyTbody.innerHTML = `<tr><td colspan="9" class="text-center">No analysis records found.</td></tr>`;
+                return;
+            }
+
+            historyTbody.innerHTML = records.map(r => `
+                <tr>
+                    <td>${r.created_at}</td>
+                    <td><strong>${escapeHtml(r.patient_name)}</strong> (${r.patient_age}y)</td>
+                    <td>${r.voice_label.includes("Parkinson") ? '<span class="badge badge-positive">Parkinson\'s</span>' : '<span class="badge badge-negative">Healthy</span>'}</td>
+                    <td><strong>${r.voice_score.toFixed(1)}%</strong></td>
+                    <td><span class="badge ${r.alcohol_risk === 'HIGH' ? 'badge-risk-high' : (r.alcohol_risk === 'MEDIUM' ? 'badge-risk-med' : 'badge-risk-low')}">${r.alcohol_risk} (${r.alcohol_prob.toFixed(1)}%)</span></td>
+                    <td>${r.tremor_label ? (r.tremor_label.includes("Parkinson") ? '<span class="badge badge-positive">Tremor Pattern</span>' : '<span class="badge badge-negative">Healthy</span>') : '<span class="badge badge-grey">N/A</span>'}</td>
+                    <td><strong>${r.tremor_score !== null && r.tremor_score !== undefined ? `${r.tremor_score.toFixed(1)}%` : '—'}</strong></td>
+                    <td>${r.alert_triggered ? '🔔 HIGH' : '—'}</td>
+                    <td><button class="btn btn-secondary btn-xs history-detail-btn" data-id="${r.id}">Details</button></td>
+                </tr>
+            `).join('');
+
+            document.querySelectorAll('.history-detail-btn').forEach(b => {
+                b.addEventListener('click', (e) => {
+                    openAnalysisDetailModal(e.target.dataset.id);
+                });
+            });
+
+        } catch (err) {
+            console.error("Failed to load analysis history:", err);
+        }
+    }
+
+    btnRefreshHistory.addEventListener('click', loadHistory);
+
+    async function openAnalysisDetailModal(analysisId) {
+        try {
+            const res = await fetch(`/api/analysis/history/${analysisId}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (!res.ok) throw new Error("Could not fetch analysis record details.");
+
+            const r = await res.json();
+
+            modalBodyContent.innerHTML = `
+                <div class="sub-metrics-grid" style="font-size:0.9rem; gap:0.75rem;">
+                    <div><strong>Patient Name:</strong> ${escapeHtml(r.patient_name)}</div>
+                    <div><strong>Age / Gender:</strong> ${r.patient_age} yrs | ${escapeHtml(r.patient_gender)}</div>
+                    <div><strong>Avg Alcohol Input:</strong> ${r.avg_drinks} drinks/day</div>
+                    <div><strong>Date & Time:</strong> ${r.created_at}</div>
+                    <div><strong>Voice Ensemble Score:</strong> ${r.voice_score.toFixed(2)}%</div>
+                    <div><strong>Voice Prediction:</strong> ${r.voice_label}</div>
+                    <div><strong>Random Forest Score:</strong> ${r.rf_score.toFixed(2)}%</div>
+                    <div><strong>Gradient Boosting Score:</strong> ${r.gb_score.toFixed(2)}%</div>
+                    <div><strong>Alcohol Model Probability:</strong> ${r.alcohol_prob.toFixed(2)}% (${r.alcohol_risk} RISK)</div>
+                    <div><strong>Tremor Model Score:</strong> ${r.tremor_score !== null && r.tremor_score !== undefined ? `${r.tremor_score.toFixed(2)}%` : 'N/A'}</div>
+                    <div><strong>Tremor Prediction:</strong> ${r.tremor_label || 'N/A'}</div>
+                    <div><strong>Tremor Source:</strong> ${r.tremor_source || 'N/A'}</div>
+                    <div><strong>Clinical Alert Triggered:</strong> ${r.alert_triggered ? 'Yes (🔔 Doctor Notified)' : 'No'}</div>
+                    <div><strong>Audio Source File:</strong> ${r.audio_filename}</div>
+                </div>
+            `;
+            detailModal.style.display = 'flex';
+
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    modalCloseBtn.addEventListener('click', () => {
+        detailModal.style.display = 'none';
+    });
+
+    detailModal.addEventListener('click', (e) => {
+        if (e.target === detailModal) {
+            detailModal.style.display = 'none';
+        }
+    });
+
+    // Close modals on clicking overlay background
+    [chatModal, patientDetailModal, doctorSelectModal, consultationModal, directAssignModal].forEach(m => {
+        if (m) {
+            m.addEventListener('click', (e) => {
+                if (e.target === m) {
+                    m.style.display = 'none';
+                    if (m === chatModal) clearInterval(chatPollingTimer);
+                }
+            });
+        }
+    });
+
+    // =========================================================================
+    // 8. AUDIO SUBTABS & LIVE WEB RECORDER (PRESERVED 100%)
     // =========================================================================
 
     subtabRecord.addEventListener('click', () => {
@@ -343,7 +1342,6 @@ document.addEventListener('DOMContentLoaded', () => {
         visualizerBox.classList.remove('recording');
     });
 
-    // File Upload Handling
     dropzone.addEventListener('click', () => audioFileInput.click());
 
     dropzone.addEventListener('dragover', (e) => {
@@ -386,7 +1384,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // =========================================================================
-    // 3. TREMOR INPUT HANDLERS
+    // 9. TREMOR INPUT HANDLERS (PRESERVED 100%)
     // =========================================================================
 
     if (subtabTremorSegment && subtabTremorUpload) {
@@ -465,7 +1463,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =========================================================================
-    // 4. ML PIPELINE SUBMISSION
+    // 10. ML PIPELINE SUBMISSION (PRESERVED 100%)
     // =========================================================================
 
     btnRunPipeline.addEventListener('click', async () => {
@@ -501,7 +1499,6 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('use_sample_audio', 'true');
         }
 
-        // Tremor parameters
         if (!useTremorSegmentMode && selectedTremorUploadFile) {
             formData.append('tremor_file', selectedTremorUploadFile);
         } else {
@@ -522,12 +1519,15 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Prediction failed');
+            if (!res.ok) throw new Error(data.detail || 'Prediction execution failed');
 
             displayAnalysisResults(data);
             loadHistory();
             if (currentUser.role === 'doctor') {
                 loadDoctorNotifications();
+                loadAssignedPatients();
+            } else {
+                loadPatientDoctorStatus();
             }
 
         } catch (err) {
@@ -541,7 +1541,6 @@ document.addEventListener('DOMContentLoaded', () => {
         resultsPlaceholder.style.display = 'none';
         resultsContent.style.display = 'flex';
 
-        // Animate results entrance
         resultsContent.style.opacity = '0';
         resultsContent.style.transform = 'translateY(20px)';
         setTimeout(() => {
@@ -550,14 +1549,13 @@ document.addEventListener('DOMContentLoaded', () => {
             resultsContent.style.transform = 'translateY(0)';
         }, 50);
 
-        // High Risk Alert Banner
         if (data.alert_triggered) {
             highRiskBanner.style.display = 'flex';
         } else {
             highRiskBanner.style.display = 'none';
         }
 
-        // Model 1: Voice Model Results
+        // Model 1: Voice
         const v = data.voice_analysis;
         const vScore = v.combined_score_pct.toFixed(1);
         voiceScoreVal.textContent = `${vScore}%`;
@@ -574,7 +1572,7 @@ document.addEventListener('DOMContentLoaded', () => {
             voiceClassBadge.className = 'result-class-badge badge-negative';
         }
 
-        // Model 2: Alcohol Model Results
+        // Model 2: Alcohol
         const a = data.alcohol_analysis;
         const aProb = a.probability_pct.toFixed(1);
         alcoholProbVal.textContent = `${aProb}%`;
@@ -591,7 +1589,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alcoholRiskBadge.className = 'result-risk-badge badge-risk-low';
         }
 
-        // Model 3: Kinematic Tremor Model Results
+        // Model 3: Tremor
         if (data.tremor_analysis && data.tremor_analysis.available) {
             const t = data.tremor_analysis;
             const tScore = t.combined_score_pct.toFixed(1);
@@ -617,7 +1615,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 tremorCvVal.textContent = "Out-of-Fold Ensemble (Honest Test)";
             }
 
-            // Tri-Modal Synthesis Display
+            // Tri-Modal Synthesis Statuses
             if (synthVoiceStatus) {
                 synthVoiceStatus.textContent = v.predicted_class === 1 ? "⚠️ Dysphonic Articulation" : "✅ Normal Phonation";
                 synthVoiceStatus.style.color = v.predicted_class === 1 ? "var(--danger-color)" : "var(--success-color)";
@@ -633,151 +1631,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // =========================================================================
-    // 5. DOCTOR NOTIFICATIONS & HISTORY
-    // =========================================================================
-
-    async function loadDoctorNotifications() {
-        try {
-            const res = await fetch('/api/notifications', {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            });
-            if (!res.ok) return;
-
-            const data = await res.json();
-            notifCountBadge.textContent = data.unread_count;
-            unreadCountBadge.textContent = `${data.unread_count} New`;
-
-            if (data.notifications.length === 0) {
-                notificationsContainer.innerHTML = `<div class="empty-state">No clinical risk alerts generated yet.</div>`;
-                return;
-            }
-
-            notificationsContainer.innerHTML = data.notifications.map(n => `
-                <div class="notif-card ${n.is_read ? 'read' : ''}">
-                    <div>
-                        <div class="notif-title">🔔 HIGH PRIORITY: ${n.patient_name} (Age: ${n.patient_age})</div>
-                        <div class="notif-meta">
-                            Voice Confidence: <strong>${n.voice_confidence.toFixed(1)}%</strong> | Generated: ${n.created_at}
-                        </div>
-                    </div>
-                    <div style="display:flex; gap:0.5rem;">
-                        ${!n.is_read ? `<button class="btn btn-secondary btn-xs mark-read-btn" data-id="${n.id}">Mark Read</button>` : ''}
-                        <button class="btn btn-primary btn-xs view-detail-btn" data-id="${n.analysis_id}">View Analysis</button>
-                    </div>
-                </div>
-            `).join('');
-
-            // Attach notification action handlers
-            document.querySelectorAll('.mark-read-btn').forEach(b => {
-                b.addEventListener('click', async (e) => {
-                    const id = e.target.dataset.id;
-                    await fetch(`/api/notifications/${id}/read`, {
-                        method: 'PATCH',
-                        headers: { 'Authorization': `Bearer ${authToken}` }
-                    });
-                    loadDoctorNotifications();
-                });
-            });
-
-            document.querySelectorAll('.view-detail-btn').forEach(b => {
-                b.addEventListener('click', (e) => {
-                    openAnalysisDetailModal(e.target.dataset.id);
-                });
-            });
-
-        } catch (err) {
-            console.error("Failed to load doctor notifications:", err);
-        }
-    }
-
-    refreshNotifsBtn.addEventListener('click', loadDoctorNotifications);
-
-    async function loadHistory() {
-        try {
-            const res = await fetch('/api/analysis/history', {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            });
-            if (!res.ok) return;
-
-            const records = await res.json();
-
-            if (records.length === 0) {
-                historyTbody.innerHTML = `<tr><td colspan="9" class="text-center">No analysis records found.</td></tr>`;
-                return;
-            }
-
-            historyTbody.innerHTML = records.map(r => `
-                <tr>
-                    <td>${r.created_at}</td>
-                    <td><strong>${r.patient_name}</strong> (${r.patient_age}y)</td>
-                    <td>${r.voice_label.includes("Parkinson") ? '<span class="badge badge-positive">Parkinson\'s</span>' : '<span class="badge badge-negative">Healthy</span>'}</td>
-                    <td><strong>${r.voice_score.toFixed(1)}%</strong></td>
-                    <td><span class="badge ${r.alcohol_risk === 'HIGH' ? 'badge-risk-high' : (r.alcohol_risk === 'MEDIUM' ? 'badge-risk-med' : 'badge-risk-low')}">${r.alcohol_risk} (${r.alcohol_prob.toFixed(1)}%)</span></td>
-                    <td>${r.tremor_label ? (r.tremor_label.includes("Parkinson") ? '<span class="badge badge-positive">Tremor Pattern</span>' : '<span class="badge badge-negative">Healthy</span>') : '<span class="badge badge-grey">N/A</span>'}</td>
-                    <td><strong>${r.tremor_score !== null && r.tremor_score !== undefined ? `${r.tremor_score.toFixed(1)}%` : '—'}</strong></td>
-                    <td>${r.alert_triggered ? '🔔 HIGH' : '—'}</td>
-                    <td><button class="btn btn-secondary btn-xs history-detail-btn" data-id="${r.id}">Details</button></td>
-                </tr>
-            `).join('');
-
-            document.querySelectorAll('.history-detail-btn').forEach(b => {
-                b.addEventListener('click', (e) => {
-                    openAnalysisDetailModal(e.target.dataset.id);
-                });
-            });
-
-        } catch (err) {
-            console.error("Failed to load analysis history:", err);
-        }
-    }
-
-    btnRefreshHistory.addEventListener('click', loadHistory);
-
-    async function openAnalysisDetailModal(analysisId) {
-        try {
-            const res = await fetch(`/api/analysis/history/${analysisId}`, {
-                headers: { 'Authorization': `Bearer ${authToken}` }
-            });
-            if (!res.ok) throw new Error("Could not fetch detail");
-
-            const r = await res.json();
-
-            modalBodyContent.innerHTML = `
-                <div class="sub-metrics-grid" style="font-size:0.9rem; gap:0.75rem;">
-                    <div><strong>Patient Name:</strong> ${r.patient_name}</div>
-                    <div><strong>Age / Gender:</strong> ${r.patient_age} yrs | ${r.patient_gender}</div>
-                    <div><strong>Avg Alcohol Input:</strong> ${r.avg_drinks} drinks/day</div>
-                    <div><strong>Date & Time:</strong> ${r.created_at}</div>
-                    <div><strong>Voice Ensemble Score:</strong> ${r.voice_score.toFixed(2)}%</div>
-                    <div><strong>Voice Prediction:</strong> ${r.voice_label}</div>
-                    <div><strong>Random Forest Score:</strong> ${r.rf_score.toFixed(2)}%</div>
-                    <div><strong>Gradient Boosting Score:</strong> ${r.gb_score.toFixed(2)}%</div>
-                    <div><strong>Alcohol Model Probability:</strong> ${r.alcohol_prob.toFixed(2)}% (${r.alcohol_risk} RISK)</div>
-                    <div><strong>Tremor Model Score:</strong> ${r.tremor_score !== null && r.tremor_score !== undefined ? `${r.tremor_score.toFixed(2)}%` : 'N/A'}</div>
-                    <div><strong>Tremor Prediction:</strong> ${r.tremor_label || 'N/A'}</div>
-                    <div><strong>Tremor Source:</strong> ${r.tremor_source || 'N/A'}</div>
-                    <div><strong>Clinical Alert Triggered:</strong> ${r.alert_triggered ? 'Yes (🔔 Doctor Notified)' : 'No'}</div>
-                    <div><strong>Audio Source File:</strong> ${r.audio_filename}</div>
-                </div>
-            `;
-            detailModal.style.display = 'flex';
-
-        } catch (err) {
-            alert(err.message);
-        }
-    }
-
-    modalCloseBtn.addEventListener('click', () => {
-        detailModal.style.display = 'none';
-    });
-
-    detailModal.addEventListener('click', (e) => {
-        if (e.target === detailModal) {
-            detailModal.style.display = 'none';
-        }
-    });
-
-    // Start App
+    // Initialize application
     initApp();
 });
